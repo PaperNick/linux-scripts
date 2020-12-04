@@ -1,11 +1,12 @@
 #!/bin/bash
 
-# Schedule in crontab:
-# */5 * * * * DISPLAY=:0.0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /path/to/battery_reminder.sh
+# Dependencies:
+# - at
 
+SCRIPT_FULL_PATH="$(readlink -f "$0")"
 
-MIN_VALUE=40
-MAX_VALUE=80
+MIN_BATTERY_PERCENT=40
+MAX_BATTERY_PERCENT=80
 
 battery_output="$(upower -i /org/freedesktop/UPower/devices/battery_BAT1)"
 
@@ -31,8 +32,30 @@ send_charge_battery_message() {
     notify-send -i battery-low "The battery percentage is low. " "Please plug in the power supply."
 }
 
-if [ $(battery_percentage) -ge $MAX_VALUE ] && [ "$(battery_state)" = "charging" ]; then
-    send_unplug_charging_message
-elif [ $(battery_percentage) -le $MIN_VALUE ] && [ "$(battery_state)" = "discharging" ]; then
-    send_charge_battery_message
-fi
+schedule_next_check() {
+    local check_after_minutes=1
+
+    if [ "$(battery_state)" = "charging" ]; then
+        if [ $(battery_percentage) -le $(( $MAX_BATTERY_PERCENT - 10 )) ]; then
+            check_after_minutes=9
+        fi
+    elif [ "$(battery_state)" = "discharging" ]; then
+        if [ $(battery_percentage) -ge $(( $MIN_BATTERY_PERCENT + 10 )) ]; then
+            check_after_minutes=10
+        fi
+    fi
+
+    echo "DISPLAY=:0.0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus $SCRIPT_FULL_PATH" | at now + $check_after_minutes minutes
+}
+
+main() {
+    if [ $(battery_percentage) -ge $MAX_BATTERY_PERCENT ] && [ "$(battery_state)" = "charging" ]; then
+        send_unplug_charging_message
+    elif [ $(battery_percentage) -le $MIN_BATTERY_PERCENT ] && [ "$(battery_state)" = "discharging" ]; then
+        send_charge_battery_message
+    fi
+
+    schedule_next_check
+}
+
+main
