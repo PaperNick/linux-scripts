@@ -5,8 +5,8 @@
 
 SCRIPT_FULL_PATH="$(readlink -f "$0")"
 
-MIN_BATTERY_PERCENT=40
-MAX_BATTERY_PERCENT=80
+MIN_BATTERY_PERCENT=41
+MAX_BATTERY_PERCENT=79
 
 battery_output="$(upower -i /org/freedesktop/UPower/devices/battery_BAT1)"
 
