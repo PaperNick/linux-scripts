@@ -25,11 +25,11 @@ battery_state() {
 }
 
 send_unplug_charging_message() {
-    notify-send -i battery-full-charged "The battery has been charged." "Please unplug the power supply."
+    notify-send -i battery-full-charging-symbolic "The battery has been charged." "Please unplug the power supply."
 }
 
 send_charge_battery_message() {
-    notify-send -i battery-low "The battery percentage is low. " "Please plug in the power supply."
+    notify-send -i battery-low-symbolic "The battery percentage is low. " "Please plug in the power supply."
 }
 
 schedule_next_check() {
