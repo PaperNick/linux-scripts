@@ -27,11 +27,11 @@ builtin_mic_status() {
 }
 
 mute_usb_mic() {
-    pactl set-source-mute "$BLUE_MIC_ID" 1
+    echo "$BLUE_MIC_ID" | xargs -I {} pactl set-source-mute "{}" 1
 }
 
 unmute_usb_mic() {
-    pactl set-source-mute "$BLUE_MIC_ID" 0
+    echo "$BLUE_MIC_ID" | xargs -I {} pactl set-source-mute "{}" 0
 }
 
 main() {
