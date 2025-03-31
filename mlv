@@ -1,0 +1,137 @@
+#!/bin/bash
+
+# Installation:
+# Move this file in ~/.local/bin
+
+
+if [ "$(command -v mullvad)" = "" ]; then
+  echo "Mullvad is not installed on this system"
+  exit 1
+fi
+
+
+USER_COMPLETIONS_DIR="$HOME/.local/share/bash-completion/completions/"
+MLV_COMPLETION_FILE="${USER_COMPLETIONS_DIR%/}/mlv"
+
+
+HELP_TEXT=$(cat <<'EOF'
+Usage: mlv <country> <city> [server]
+
+Set a new Mullvad VPN location.
+
+Positional arguments:
+  country  VPN country (e.g. us)
+  city  VPN city (e.g. sea)
+  server  Optional: VPN server (e.g. wg-101). If unspecified, picks a random server
+
+optional arguments:
+  -c, --completion  Install the completion script
+  -h, --help  Show this help message and exit
+EOF
+)
+
+
+COMPLETION_SCRIPT=$(cat <<'EOF'
+#!/bin/bash
+
+# System-wide installation:
+# 1. sudo touch /etc/bash_completion.d/mlv
+# 2. Paste the contents of this file
+#
+# Sources:
+# https://www.baeldung.com/linux/shell-auto-completion
+# https://opensource.com/article/18/3/creating-bash-completion-script
+# https://serverfault.com/a/1013395
+
+
+function __mlv() {
+  latest_arg="${COMP_WORDS[$COMP_CWORD]}"
+  previous_arg="${COMP_WORDS[$COMP_CWORD - 1]}"
+  arg_length="$(( ${#COMP_WORDS[@]} - 1 ))"
+  words=""
+
+  country="${COMP_WORDS[1]}"
+  city="${COMP_WORDS[2]}"
+  server="${COMP_WORDS[3]}"
+
+  if [ "$arg_length" = "1" ]; then
+    # Show countries
+    words="$(mullvad relay list | grep -E '.*\.*\.*\.*\) \-' | awk '{print $1}' | cut -d '-' -f1 | uniq)"
+    COMPREPLY=($(compgen -W "$words" "$country"))
+  elif [ "$arg_length" = "2" ]; then
+    # Show cities
+    words="$(mullvad relay list | grep -E "${country}-.*" | awk '{print $1}' | cut -d '-' -f2 | uniq)"
+    COMPREPLY=($(compgen -W "$words" "$city"))
+  elif [ "$arg_length" = "3" ]; then
+    # Show VPN servers
+    words="$(mullvad relay list | grep -E "${country}-${city}.*" | grep -oP '^[^-]+-[^-]+-\K[^ ]+(?= \()')"
+    COMPREPLY=($(compgen -W "$words" "$server"))
+  fi
+
+  return 0
+}
+
+complete -F __mlv mlv
+EOF
+)
+
+function install_completions() {
+  echo "Installing bash completion script in \"$USER_COMPLETIONS_DIR\""
+  mkdir -p "$USER_COMPLETIONS_DIR"
+  echo "$COMPLETION_SCRIPT" > "$MLV_COMPLETION_FILE"
+  echo 'Installation complete! Restart your shell to use auto completions.'
+}
+
+
+PARAMS=""
+while (( "$#" )); do
+  case "$1" in
+    -c|--completion)
+      install_completions
+      exit 0
+      ;;
+    -h|--help)
+      echo "$HELP_TEXT"
+      exit 0
+      ;;
+    --) # End argument parsing
+      shift
+      break
+      ;;
+    -*|--*=) # Unsupported flags
+      echo "Error: Unsupported flag $1" >&2
+      echo "$HELP_TEXT"
+      exit 1
+      ;;
+    *) # Preserve positional arguments
+      PARAMS="$PARAMS $1"
+      shift
+      ;;
+  esac
+done
+
+# Set positional arguments in their proper place
+eval set -- "$PARAMS"
+
+
+country="$1"
+city="$2"
+server="$3"
+
+if [ "$country" = "" ]; then
+  echo "$HELP_TEXT"
+  exit 1
+fi
+
+if [ "$city" = "" ]; then
+  echo "$HELP_TEXT"
+  exit 1
+fi
+
+if [ "$server" = "" ]; then
+  # Assign a random server
+  server="$(mullvad relay list | grep -E "${country}-${city}.*" | grep -oP '^[^-]+-[^-]+-\K[^ ]+(?= \()' | shuf -n 1)"
+fi
+
+
+mullvad relay set location "$country" "$city" "${country}-${city}-${server}"
