@@ -15,7 +15,7 @@ MLV_COMPLETION_FILE="${USER_COMPLETIONS_DIR%/}/mlv"
 
 
 HELP_TEXT=$(cat <<'EOF'
-Usage: mlv <country> <city> [server]
+Usage: mlv [country] [city] [server]
 
 Set a new Mullvad VPN location.
 
@@ -24,9 +24,15 @@ Positional arguments:
   city  VPN city (e.g. sea)
   server  Optional: VPN server (e.g. wg-101). If unspecified, picks a random server
 
-optional arguments:
+Optional arguments:
   -c, --completion  Install the completion script
   -h, --help  Show this help message and exit
+
+Example usage:
+  mlv  # Select a random VPN server from around the world
+  mlv <country>  # Select a random VPN server in the given country
+  mlv <country> <city>  # Select a random VPN server in the given country and city
+  mlv <country> <city> <server>  # Select a specific VPN server
 EOF
 )
 
@@ -119,13 +125,13 @@ city="$2"
 server="$3"
 
 if [ "$country" = "" ]; then
-  echo "$HELP_TEXT"
-  exit 1
+  # Assign a random country
+  country="$(mullvad relay list | grep -E '.*\.*\.*\.*\) \-' | awk '{print $1}' | cut -d '-' -f 1 | uniq | shuf -n 1)"
 fi
 
 if [ "$city" = "" ]; then
-  echo "$HELP_TEXT"
-  exit 1
+  # Assign a random city
+  city="$(mullvad relay list | grep -E "${country}-.*" | awk '{print $1}' | cut -d '-' -f 2 | uniq | shuf -n 1)"
 fi
 
 if [ "$server" = "" ]; then
