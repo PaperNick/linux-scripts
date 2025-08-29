@@ -1,54 +1,58 @@
 #!/bin/bash
 
-# Mute/Unmute built-in and external USB mics
+# Toggles the active input devices and mutes the rest of the input sources
+
+# Sources:
 # Inspired from: https://askubuntu.com/a/1152002
 # Use pactl instead of pacmd: https://www.baeldung.com/linux/microphone-mute-unmute
+# https://man.archlinux.org/man/pactl.1#COMMANDS
+
+# Devices
+DEFAULT_DEVICE='@DEFAULT_SOURCE@'
+DEFAULT_DEVICE_NAME="$(pactl get-default-source)"  # Returns "auto_null.monitor" when no input devices
+DEFAULT_DEVICE_ID="$(pactl list short sources | grep "$DEFAULT_DEVICE_NAME" | awk '{print $1}')"
 
 INTERNAL_MIC_ID="$(pactl list short sources | grep 'alsa_input.pci-0000' | awk '{print $1}')"
 BLUE_MIC_ID="$(pactl list short sources | grep Blue_Microphones | awk '{print $1}')"
+FOCUSRITE_SCARLETT_ID="$(pactl list short sources | grep 'alsa_input.usb-Focusrite_Scarlett_4i4' | awk '{print $1}')"
+ALL_DEVICES=("$INTERNAL_MIC_ID" "$BLUE_MIC_ID" "$FOCUSRITE_SCARLETT_ID")
 
-toggle_builtin_mic() {
-    pactl set-source-mute "$INTERNAL_MIC_ID" toggle
+OTHER_DEVICES=()
+for device_id in "${ALL_DEVICES[@]}"; do
+  if [ "$device_id" != "" ] && [ "$device_id" != "$DEFAULT_DEVICE_ID" ]; then
+    OTHER_DEVICES+=("$device_id")
+  fi
+done
+
+is_device_muted() {
+  local device_id="$1"
+
+  # Return value: 'yes' or 'no'
+  pactl get-source-mute "$device_id" | awk '{print $2}'
 }
 
-toggle_usb_mic() {
-    pactl set-source-mute "$BLUE_MIC_ID" toggle
+toggle_device() {
+  local device_id="$1"
+  pactl set-source-mute "$device_id" toggle
 }
 
-builtin_mic_status() {
-    local is_builtin_mic_muted="$(pactl list | grep -i "Source.*#$INTERNAL_MIC_ID" -A 10 | grep -i Mute | awk '{print $2}')"
-    if [ "$(echo $is_builtin_mic_muted)" = 'yes' ]; then
-        # Mic is off - return value 0
-        echo 0
-    else
-        # Mic is on - return value 1
-        echo 1
-    fi
+mute_device() {
+  local device_id="$1"
+  echo "$device_id" | xargs -I {} pactl set-source-mute "{}" 1
 }
 
-mute_usb_mic() {
-    echo "$BLUE_MIC_ID" | xargs -I {} pactl set-source-mute "{}" 1
-}
-
-unmute_usb_mic() {
-    echo "$BLUE_MIC_ID" | xargs -I {} pactl set-source-mute "{}" 0
+unmute_device() {
+  local device_id="$1"
+  echo "$device_id" | xargs -I {} pactl set-source-mute "{}" 0
 }
 
 main() {
-    if [ "$INTERNAL_MIC_ID" = "" ]; then
-        # Internal mic is not enabled, toggle only the Blue mic
-        toggle_usb_mic
-    else
-        toggle_builtin_mic
-        is_builtin_mic_on="$(builtin_mic_status)"
-        if [ "$is_builtin_mic_on" = "1" ]; then
-            unmute_usb_mic
-            notify-send -t 3000 -i audio-input-microphone-symbolic 'Microphone On' 'You microphone is now enabled'
-        else
-            mute_usb_mic
-            notify-send -t 3000 -i microphone-sensitivity-muted-symbolic 'Microphone Muted' 'You microphone has been muted'
-        fi
-    fi
+  toggle_device "$DEFAULT_DEVICE"
+
+  # Mute other input sources
+  for device_id in "${OTHER_DEVICES[@]}"; do
+    mute_device "$device_id"
+  done
 }
 
 main
