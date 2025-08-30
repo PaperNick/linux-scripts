@@ -15,7 +15,8 @@ DEFAULT_DEVICE_ID="$(pactl list short sources | grep "$DEFAULT_DEVICE_NAME" | aw
 INTERNAL_MIC_ID="$(pactl list short sources | grep 'alsa_input.pci-0000' | awk '{print $1}')"
 BLUE_MIC_ID="$(pactl list short sources | grep 'alsa_input.usb.*Blue_Microphones' | awk '{print $1}')"
 FOCUSRITE_SCARLETT_ID="$(pactl list short sources | grep 'alsa_input.usb-Focusrite_Scarlett_4i4' | awk '{print $1}')"
-ALL_DEVICES=("$INTERNAL_MIC_ID" "$BLUE_MIC_ID" "$FOCUSRITE_SCARLETT_ID")
+YAMAHA_MIXER_ID="$(pactl list short sources | grep 'alsa_input.usb.*Yamaha_AG06MK2' | awk '{print $1}')"
+ALL_DEVICES=("$INTERNAL_MIC_ID" "$BLUE_MIC_ID" "$FOCUSRITE_SCARLETT_ID" "$YAMAHA_MIXER_ID")
 
 OTHER_DEVICES=()
 for device_id in "${ALL_DEVICES[@]}"; do
