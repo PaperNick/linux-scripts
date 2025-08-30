@@ -1,0 +1,221 @@
+#!/bin/bash
+
+# Script to download a YouTube music playlist in mp3 or webm with proper numbering
+#
+# Installation:
+# Move this file in ~/.local/bin
+
+
+SCRIPT_NAME="$(basename "$(readlink -f "$0")")"
+
+HELP_TEXT=$(cat <<EOF
+Usage: $SCRIPT_NAME <youtube_playlist_id>
+
+Download the audio files of a YouTube music playlist using "yt-dlp" and "jq"
+
+Positional arguments:
+  youtube_playlist_id: A YouTube music playlist ID
+    Example: OLAK5uy_lfgcchZqhje3Zx8X1pjwPBHkGphEDarHo
+
+Optional arguments:
+  -t mp3|webm: yt-dlp flag to convert the downloaded file
+    Default: mp3
+    More info: https://github.com/yt-dlp/yt-dlp?tab=readme-ov-file#preset-aliases
+
+  -s, --step: From which step to start the execution
+    Possible values: 1, 2 ,3
+
+    Step 1: Extract video IDs from the playlist
+    Step 2: Download audio files from playlist
+    Step 3: Retrieve titles, sanitize them and rename the resulting files
+EOF
+)
+
+PARAMS=""
+while (( "$#" )); do
+  case "$1" in
+    -t)
+      SONG_EXTENSION="$2"
+      if [ "$SONG_EXTENSION" = "" ]; then
+        echo "Please specify a valid song format."
+        echo
+        echo "$HELP_TEXT"
+        exit 1
+      fi
+      if ! [[ " mp3 webm " =~ " $SONG_EXTENSION " ]]; then
+        echo "Please specify a valid song format."
+        echo
+        echo "$HELP_TEXT"
+        exit 1
+      fi
+      shift 2
+      ;;
+    -s|--step)
+      START_EXECUTION_STEP="$2"
+      if [ "$START_EXECUTION_STEP" -lt 1 ] || [ "$START_EXECUTION_STEP" -gt 3 ]; then
+        echo "Invalid execution step provided. Please specify a correct value."
+        echo
+        echo "$HELP_TEXT"
+        exit 1
+      fi
+      shift 2
+      ;;
+    -h)
+      echo "$HELP_TEXT"
+      exit 0
+      ;;
+    --)  # End argument parsing
+      shift
+      break
+      ;;
+    -*|--*=)  # Unsupported flags
+      echo "Error: Unsupported flag $1" >&2
+      echo
+      echo "$HELP_TEXT"
+      exit 1
+      ;;
+    *)  # Preserve positional arguments
+      PARAMS="$PARAMS $1"
+      shift
+      ;;
+  esac
+done
+
+# Set positional arguments in their proper place
+eval set -- "$PARAMS"
+
+
+SONG_EXTENSION=${SONG_EXTENSION:-mp3}
+START_EXECUTION_STEP="${START_EXECUTION_STEP:-1}"
+YOUTUBE_IDS_FILE="Album.txt"
+YT_DLP_FORMAT="bestaudio"
+
+PLAYLIST_URL="$1"
+if [ "$PLAYLIST_URL" = "" ]; then
+  echo "Please specify a YouTube music playlist as first param."
+  echo
+  echo "$HELP_TEXT"
+  exit 1
+fi
+
+function check_dependencies() {
+  if [ "$(command -v yt-dlp)" = "" ]; then
+    echo '"yt-dlp" is not installed on this system. Aborting script.'
+    echo "$HELP_TEXT"
+    exit 1
+  fi
+
+  if [ "$(command -v jq)" = "" ]; then
+    echo '"jq" is not installed on this system. Aborting script.'
+    echo "$HELP_TEXT"
+    exit 1
+  fi
+}
+
+function sanitize_filename() {
+  local filename="$1"
+  
+  # Replace special characters with their Unicode equivalents
+  filename="${filename//\//⧸}"
+  filename="${filename//\*/＊}"
+  filename="${filename//\?/？}"
+  filename="${filename//&/＆}"
+  filename="${filename//:/：}"
+  filename="${filename//;/；}"
+  filename="${filename//|/｜}"
+  filename="${filename//>/＞}"
+  filename="${filename//</＜}"
+  filename="${filename//\"/＂}"
+  filename="${filename//\'/＇}"
+  filename="${filename//\\/＼}"
+  filename="${filename//\$/＄}"
+  filename="${filename//!/！}"
+  filename="${filename//\#/＃}"
+
+  # Remove " - Topic"
+  filename="${filename// - Topic/}"
+
+  echo "$filename"
+}
+
+function step_1() {
+  echo "Step 1: Extracting video IDs from playlist..."
+  yt-dlp "$PLAYLIST_URL" --flat-playlist --dump-single-json | jq -r '.entries[].id' > "$YOUTUBE_IDS_FILE"
+
+  if [ "$?" != "0" ]; then
+    echo "Error: Failed to extract video IDs."
+    exit 1
+  fi
+}
+
+function step_2() {
+  echo "Step 2: Downloading audio from playlist..."
+
+  if [ ! -f "$YOUTUBE_IDS_FILE" ]; then
+    echo "Cannot find YouTube playlist IDs file: $YOUTUBE_IDS_FILE"
+    exit 1
+  fi
+
+  if [ "$SONG_EXTENSION" = "webm" ]; then
+    yt-dlp -f "$YT_DLP_FORMAT" -o "%(id)s.%(ext)s" -a "$YOUTUBE_IDS_FILE"
+  else
+    yt-dlp -f "$YT_DLP_FORMAT" -o "%(id)s.%(ext)s" -t "$SONG_EXTENSION" -a "$YOUTUBE_IDS_FILE"
+  fi
+
+  if [ "$?" != "0" ]; then
+    echo "Error: Failed to download audio."
+    exit 1
+  fi
+}
+
+function step_3() {
+  echo "Step 3: Downloading playlist titles..."
+  TITLES=$(yt-dlp "$PLAYLIST_URL" --flat-playlist --dump-single-json | jq -r '.entries[] | [.channel, " - ", .title] | add')
+
+  if [ "$?" != "0" ]; then
+    echo "Error: Failed to download playlist titles."
+    exit 1
+  fi
+
+  echo "Sanitizing playlist titles..."
+  SANITIZED_TITLES=()
+  while IFS= read -r title; do
+    SANITIZED_TITLES+=("$(sanitize_filename "$title")")
+  done <<< "$TITLES"
+
+  echo "Renaming files..."
+  local ind=0
+  for youtube_id in $(cat "$YOUTUBE_IDS_FILE"); do
+    old_filename="$youtube_id.$SONG_EXTENSION"
+    new_filename=$(printf "%02d. %s.%s" "$((ind+1))" "${SANITIZED_TITLES[$ind]}" "$SONG_EXTENSION")
+
+    if [ ! -f "$old_filename" ]; then
+      echo "Cannot find song: $youtube_id.$SONG_EXTENSION"
+      continue
+    fi
+
+    # Mark mv command args end with "--" to prevent interpreting files starting with "-" as CLI args
+    mv -- "$old_filename" "$new_filename"
+
+    if [ "$?" != "0" ]; then
+      echo "Error: Failed to rename file $old_filename to $new_filename."
+      exit 1
+    fi
+
+    ind=$((ind+1))
+  done
+}
+
+
+function main() {
+  # Dynamically execute a function from the selected step until the end
+  for ind in $(seq "$START_EXECUTION_STEP" 3); do
+    "step_$ind"
+  done
+
+  echo "Playlist download complete!"
+}
+
+
+check_dependencies
+main
