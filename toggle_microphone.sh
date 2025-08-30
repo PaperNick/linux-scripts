@@ -13,7 +13,7 @@ DEFAULT_DEVICE_NAME="$(pactl get-default-source)"  # Returns "auto_null.monitor"
 DEFAULT_DEVICE_ID="$(pactl list short sources | grep "$DEFAULT_DEVICE_NAME" | awk '{print $1}')"
 
 INTERNAL_MIC_ID="$(pactl list short sources | grep 'alsa_input.pci-0000' | awk '{print $1}')"
-BLUE_MIC_ID="$(pactl list short sources | grep Blue_Microphones | awk '{print $1}')"
+BLUE_MIC_ID="$(pactl list short sources | grep 'alsa_input.usb.*Blue_Microphones' | awk '{print $1}')"
 FOCUSRITE_SCARLETT_ID="$(pactl list short sources | grep 'alsa_input.usb-Focusrite_Scarlett_4i4' | awk '{print $1}')"
 ALL_DEVICES=("$INTERNAL_MIC_ID" "$BLUE_MIC_ID" "$FOCUSRITE_SCARLETT_ID")
 
