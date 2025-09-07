@@ -132,7 +132,8 @@ function sanitize_filename() {
   filename="${filename//!/！}"
   filename="${filename//\#/＃}"
 
-  # Remove " - Topic"
+  # Remove generic artist name and "Topic" suffix
+  filename="${filename//Release - Topic - /}"
   filename="${filename// - Topic/}"
 
   echo "$filename"
