@@ -1,0 +1,138 @@
+#!/bin/bash
+
+# Installation:
+# Move this file in ~/.local/bin
+
+
+SCRIPT_NAME="$(basename "$(readlink -f "$0")")"
+
+HELP_TEXT=$(cat <<EOF
+Usage: $SCRIPT_NAME <video> [en.srt ja.srt ...]
+
+Embed subtitle files into a video using "ffmpeg" and create a new MKV file.
+
+Positional arguments:
+  video: The input video file.
+  [en.srt ja.srt ...]:  One subtitle file or more.
+    You can specify an unlimited number of subtitle files.
+    The script will try infer the language from each filename.
+    If it fails to do so, the script will prompt you to enter the language manually.
+
+    Note: the first subtitle file that is given will be set as default in the resulting MKV file.
+EOF
+)
+
+
+if [ $# -lt 2 ]; then
+  echo "Please specify at least 1 video file and 1 subtitle file"
+  echo
+  echo "$HELP_TEXT"
+  exit 1
+fi
+
+VIDEO_FILE="$1"
+OUTPUT_FILE="${VIDEO_FILE%.*}.mkv"
+
+# Shift all parameters forward to work only with the subtitle files
+shift
+
+SUBTITLE_FILES=("$@")
+
+
+function check_dependencies() {
+  if [ "$(command -v ffmpeg)" = "" ]; then
+    echo '"ffmpeg" is not installed on this system. Aborting script.'
+    echo "$HELP_TEXT"
+    exit 1
+  fi
+}
+
+function check_files() {
+  if [ ! -f "$VIDEO_FILE" ]; then
+    echo "Error: Video file '$VIDEO_FILE' not found."
+    exit 1
+  fi
+
+  for sub_file in "${SUBTITLE_FILES[@]}"; do
+    if [ ! -f "$sub_file" ]; then
+      echo "Error: Subtitle file '$sub_file' not found."
+      exit 1
+    fi
+  done
+}
+
+function infer_language() {
+  local filename="$1"
+  local language
+
+  # Extract language from filename using regex
+  if [[ "$filename" =~ (en|en-US|ko|kr|ja|jp|ch|zh|zh-Hans|zh-Hant|zh-TW)\.(srt|ass)$ ]]; then
+    case "${BASH_REMATCH[1]}" in
+      en|en-US) language="English" ;;
+      ko|kr) language="Korean" ;;
+      ja|jp) language="Japanese" ;;
+      ch|zh) language="Chinese" ;;
+      zh-Hans) language="Chinese (Simplified)" ;;
+      zh-Hant) language="Chinese (Traditional)" ;;
+      zh-TW) language="Chinese (Taiwan)" ;;
+    esac
+  fi
+
+  # Prompt for language if not inferred from file name
+  while [ "$language" = "" ]; do
+    read -r -p "Enter language for '$filename': " language
+    if [ "$language" != "" ]; then
+      break
+    fi
+  done
+
+  echo "$language"
+}
+
+function build_ffmpeg_command() {
+  local ffmpeg_command="ffmpeg -i '$VIDEO_FILE'"
+
+  # Add the subtitle files
+  for sub_file in "${SUBTITLE_FILES[@]}"; do
+    ffmpeg_command="$ffmpeg_command -i '$sub_file'"
+  done
+
+  # Map all inputs
+  ffmpeg_command="$ffmpeg_command -map 0"  # Map the video file
+  for ind in "${!SUBTITLE_FILES[@]}"; do
+    ffmpeg_command="$ffmpeg_command -map $((ind + 1))"
+  done
+
+  # Add subtitle streams
+  for ind in "${!SUBTITLE_FILES[@]}"; do
+    sub_file="${SUBTITLE_FILES[$ind]}"
+    language=$(infer_language "$sub_file")
+
+    if [ "$ind" = "0" ]; then
+      # Set the first subtitle file as default. That way media players will load it automatically
+      ffmpeg_command="$ffmpeg_command -disposition:s:0 default"
+    fi
+
+    ffmpeg_command="$ffmpeg_command -metadata:s:s:$ind language='$language'"
+  done
+
+  echo "$ffmpeg_command -c copy '$OUTPUT_FILE'"
+}
+
+
+function main() {
+  if [ -f "$OUTPUT_FILE" ]; then
+    read -r -p "File '$OUTPUT_FILE' already exists. Overwrite? [y/N] " overwrite_output_file
+    if [ "${overwrite_output_file:0:1}" != "y" ]; then
+      exit 0
+    fi
+  fi
+
+  # Pass the -y flag to ffmpeg to overwrite the existing file
+  echo "$(build_ffmpeg_command) -y" | bash
+}
+
+
+check_dependencies
+check_files
+main
