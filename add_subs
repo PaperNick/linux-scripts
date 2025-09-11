@@ -15,12 +15,48 @@ Positional arguments:
   video: The input video file.
   [en.srt ja.srt ...]:  One subtitle file or more.
     You can specify an unlimited number of subtitle files.
-    The script will try infer the language from each filename.
+    The script will try to infer the language from each filename.
     If it fails to do so, the script will prompt you to enter the language manually.
 
     Note: the first subtitle file that is given will be set as default in the resulting MKV file.
+
+Optional arguments:
+  -d, --debug: Show the generated ffmpeg command without executing it
+  -h, --help: Show the help text
 EOF
 )
+
+
+PARAMS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d|--debug)
+      IS_DEBUG="1"
+      shift 1
+      ;;
+    -h|--help)
+      echo "$HELP_TEXT"
+      exit 0
+      ;;
+    --)  # End argument parsing
+      shift 1
+      break
+      ;;
+    -*|--*=)  # Unsupported flags
+      echo "Error: Unsupported flag $1" >&2
+      echo
+      echo "$HELP_TEXT"
+      exit 1
+      ;;
+    *)  # Preserve positional arguments
+      PARAMS="$PARAMS '$1'"
+      shift 1
+      ;;
+  esac
+done
+
+# Set positional arguments in their proper place
+eval set -- "$PARAMS"
 
 
 if [ $# -lt 2 ]; then
@@ -34,7 +70,7 @@ VIDEO_FILE="$1"
 OUTPUT_FILE="${VIDEO_FILE%.*}.mkv"
 
 # Shift all parameters forward to work only with the subtitle files
-shift
+shift 1
 
 SUBTITLE_FILES=("$@")
 
@@ -109,7 +145,7 @@ function build_ffmpeg_command() {
     language=$(infer_language "$sub_file")
 
     if [ "$ind" = "0" ]; then
-      # Set the first subtitle file as default. That way media players will load it automatically
+      # Set the first subtitle file as default, that way media players will load it automatically
       ffmpeg_command="$ffmpeg_command -disposition:s:0 default"
     fi
 
@@ -121,6 +157,12 @@ function build_ffmpeg_command() {
 
 
 function main() {
+  if [ "$IS_DEBUG" = "1" ]; then
+    echo "Debug mode: ON"
+    echo "$(build_ffmpeg_command)"
+    exit 0
+  fi
+
   if [ -f "$OUTPUT_FILE" ]; then
     read -r -p "File '$OUTPUT_FILE' already exists. Overwrite? [y/N] " overwrite_output_file
     if [ "${overwrite_output_file:0:1}" != "y" ]; then
