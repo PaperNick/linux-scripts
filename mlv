@@ -62,15 +62,15 @@ function __mlv() {
 
   if [ "$arg_length" = "1" ]; then
     # Show countries
-    words="$(mullvad relay list | grep -E '.*\.*\.*\.*\) \-' | awk '{print $1}' | cut -d '-' -f 1 | uniq)"
+    words="$(mullvad relay list | grep -oP '^[A-Za-z]+\s+\(\K[a-z]+')"
     COMPREPLY=($(compgen -W "$words" "$country"))
   elif [ "$arg_length" = "2" ]; then
     # Show cities
-    words="$(mullvad relay list | grep -E "${country}-.*" | awk '{print $1}' | cut -d '-' -f 2 | uniq)"
+    words="$(mullvad relay list | grep -oP "^[\s]+${country}-\K[a-z]+" | uniq)"
     COMPREPLY=($(compgen -W "$words" "$city"))
   elif [ "$arg_length" = "3" ]; then
     # Show VPN servers
-    words="$(mullvad relay list | grep -E "${country}-${city}.*" | awk '{print $1}' | cut -d '-' -f 3-)"
+    words="$(mullvad relay list | grep -oP "^[\s]+${country}-${city}-\K[^\s]+")"
     COMPREPLY=($(compgen -W "$words" "$server"))
   fi
 
@@ -126,17 +126,17 @@ server="$3"
 
 if [ "$country" = "" ]; then
   # Assign a random country
-  country="$(mullvad relay list | grep -E '.*\.*\.*\.*\) \-' | awk '{print $1}' | cut -d '-' -f 1 | uniq | shuf -n 1)"
+  country="$(mullvad relay list | grep -oP '^[A-Za-z]+\s+\(\K[a-z]+' | shuf -n 1)"
 fi
 
 if [ "$city" = "" ]; then
   # Assign a random city
-  city="$(mullvad relay list | grep -E "${country}-.*" | awk '{print $1}' | cut -d '-' -f 2 | uniq | shuf -n 1)"
+  city="$(mullvad relay list | grep -oP "^[\s]+${country}-\K[a-z]+" | uniq | shuf -n 1)"
 fi
 
 if [ "$server" = "" ]; then
   # Assign a random server
-  server="$(mullvad relay list | grep -E "${country}-${city}.*" | awk '{print $1}' | cut -d '-' -f 3- | shuf -n 1)"
+  server="$(mullvad relay list | grep -oP "^[\s]+${country}-${city}-\K[^\s]+" | shuf -n 1)"
 fi
 
 
