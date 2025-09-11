@@ -18,7 +18,7 @@ Positional arguments:
     Example: OLAK5uy_lfgcchZqhje3Zx8X1pjwPBHkGphEDarHo
 
 Optional arguments:
-  -t mp3|webm: yt-dlp flag to convert the downloaded file
+  -t, --template mp3|webm: yt-dlp flag to convert the downloaded file
     Default: mp3
     More info: https://github.com/yt-dlp/yt-dlp?tab=readme-ov-file#preset-aliases
 
@@ -36,7 +36,7 @@ EOF
 PARAMS=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    -t)
+    -t|--template)
       SONG_EXTENSION="$2"
       if [ "$SONG_EXTENSION" = "" ]; then
         echo "Please specify a valid song format."
