@@ -28,11 +28,13 @@ Optional arguments:
     Step 1: Extract video IDs from the playlist
     Step 2: Download audio files from playlist
     Step 3: Retrieve titles, sanitize them and rename the resulting files
+
+  -h, --help: Show the help text
 EOF
 )
 
 PARAMS=""
-while (( "$#" )); do
+while [ $# -gt 0 ]; do
   case "$1" in
     -t)
       SONG_EXTENSION="$2"
@@ -60,12 +62,12 @@ while (( "$#" )); do
       fi
       shift 2
       ;;
-    -h)
+    -h|--help)
       echo "$HELP_TEXT"
       exit 0
       ;;
     --)  # End argument parsing
-      shift
+      shift 1
       break
       ;;
     -*|--*=)  # Unsupported flags
@@ -75,8 +77,8 @@ while (( "$#" )); do
       exit 1
       ;;
     *)  # Preserve positional arguments
-      PARAMS="$PARAMS $1"
-      shift
+      PARAMS="$PARAMS '$1'"
+      shift 1
       ;;
   esac
 done
