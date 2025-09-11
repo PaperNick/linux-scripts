@@ -90,7 +90,7 @@ function install_completions() {
 
 
 PARAMS=""
-while (( "$#" )); do
+while [ $# -gt 0 ]; do
   case "$1" in
     -c|--completion)
       install_completions
@@ -110,7 +110,7 @@ while (( "$#" )); do
       exit 1
       ;;
     *) # Preserve positional arguments
-      PARAMS="$PARAMS $1"
+      PARAMS="$PARAMS '$1'"
       shift
       ;;
   esac
