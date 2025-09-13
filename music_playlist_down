@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script to download a YouTube music playlist in mp3 or webm with proper numbering
+# Script to download a YouTube music playlist in mp3, m4a or webm with proper numbering
 #
 # Installation:
 # Move this file in ~/.local/bin
@@ -18,7 +18,7 @@ Positional arguments:
     Example: OLAK5uy_lfgcchZqhje3Zx8X1pjwPBHkGphEDarHo
 
 Optional arguments:
-  -t, --template mp3|webm: yt-dlp flag to convert the downloaded file
+  -t, --template mp3|aac|webm: yt-dlp flag to convert the downloaded file
     Default: mp3
     More info: https://github.com/yt-dlp/yt-dlp?tab=readme-ov-file#preset-aliases
 
@@ -37,14 +37,14 @@ PARAMS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -t|--template)
-      SONG_EXTENSION="$2"
-      if [ "$SONG_EXTENSION" = "" ]; then
+      SONG_FORMAT="$2"
+      if [ "$SONG_FORMAT" = "" ]; then
         echo "Please specify a valid song format."
         echo
         echo "$HELP_TEXT"
         exit 1
       fi
-      if ! [[ " mp3 webm " =~ " $SONG_EXTENSION " ]]; then
+      if ! [[ " mp3 aac webm " =~ " $SONG_FORMAT " ]]; then
         echo "Please specify a valid song format."
         echo
         echo "$HELP_TEXT"
@@ -87,7 +87,7 @@ done
 eval set -- "$PARAMS"
 
 
-SONG_EXTENSION=${SONG_EXTENSION:-mp3}
+SONG_FORMAT=${SONG_FORMAT:-mp3}
 START_EXECUTION_STEP="${START_EXECUTION_STEP:-1}"
 YOUTUBE_IDS_FILE="Album.txt"
 YT_DLP_FORMAT="bestaudio"
@@ -99,6 +99,11 @@ if [ "$PLAYLIST_URL" = "" ]; then
   echo "$HELP_TEXT"
   exit 1
 fi
+
+declare -A song_format_to_file_extension
+song_format_to_file_extension["aac"]="m4a"
+song_format_to_file_extension["mp3"]="mp3"
+song_format_to_file_extension["webm"]="webm"
 
 function check_dependencies() {
   if [ "$(command -v yt-dlp)" = "" ]; then
@@ -160,10 +165,10 @@ function step_2() {
     exit 1
   fi
 
-  if [ "$SONG_EXTENSION" = "webm" ]; then
+  if [ "$SONG_FORMAT" = "webm" ]; then
     yt-dlp -f "$YT_DLP_FORMAT" -o "%(id)s.%(ext)s" -a "$YOUTUBE_IDS_FILE"
   else
-    yt-dlp -f "$YT_DLP_FORMAT" -o "%(id)s.%(ext)s" -t "$SONG_EXTENSION" -a "$YOUTUBE_IDS_FILE"
+    yt-dlp -f "$YT_DLP_FORMAT" -o "%(id)s.%(ext)s" -t "$SONG_FORMAT" -a "$YOUTUBE_IDS_FILE"
   fi
 
   if [ "$?" != "0" ]; then
@@ -190,11 +195,12 @@ function step_3() {
   echo "Renaming files..."
   local ind=0
   for youtube_id in $(cat "$YOUTUBE_IDS_FILE"); do
-    old_filename="$youtube_id.$SONG_EXTENSION"
-    new_filename=$(printf "%02d. %s.%s" "$((ind+1))" "${SANITIZED_TITLES[$ind]}" "$SONG_EXTENSION")
+    file_extension="${song_format_to_file_extension["$SONG_FORMAT"]}"
+    old_filename="$youtube_id.$file_extension"
+    new_filename=$(printf "%02d. %s.%s" "$((ind+1))" "${SANITIZED_TITLES[$ind]}" "$file_extension")
 
     if [ ! -f "$old_filename" ]; then
-      echo "Cannot find song: $youtube_id.$SONG_EXTENSION"
+      echo "Cannot find song: $youtube_id.$file_extension"
       continue
     fi
 
