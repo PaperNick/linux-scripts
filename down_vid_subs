@@ -1,0 +1,115 @@
+#!/bin/bash
+
+# Installation:
+# Move this file in ~/.local/bin
+
+
+if [ "$(command -v yt-dlp)" = "" ]; then
+  echo 'Error: "yt-dlp" is not installed on this system. Aborting script.'
+  exit 1
+fi
+
+
+SCRIPT_NAME="$(basename "$(readlink -f "$0")")"
+
+
+HELP_TEXT=$(cat <<EOF
+Usage: $SCRIPT_NAME <video_url> [en ja ko ...]
+
+Downloads a video and its subtitles in multiple languages using yt-dlp.
+
+Positional arguments:
+  video_url: The URL of the YouTube video to download.
+  [en ja ko ...]:  One subtitle language code or more.
+    Valid language codes can be found using:
+      yt-dlp --list-subs <video_url>
+
+Optional arguments:
+  -l, --list-subs: Show the available subtitles for <video_url> and exit.
+  -h, --help: Show the help text.
+
+Example Usage:
+  $SCRIPT_NAME https://youtu.be/M268Csnue9I en
+  $SCRIPT_NAME https://youtu.be/M268Csnue9I en ja
+  $SCRIPT_NAME https://youtu.be/M268Csnue9I en ja ko zh
+EOF
+)
+
+
+PARAMS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -l|--list-subs)
+      LIST_SUBS="1"
+      shift 1
+      ;;
+    -h|--help)
+      echo "$HELP_TEXT"
+      exit 0
+      ;;
+    --)  # End argument parsing
+      shift 1
+      break
+      ;;
+    -*|--*=)  # Unsupported flags
+      echo "Error: Unsupported flag $1" >&2
+      echo
+      echo "$HELP_TEXT"
+      exit 1
+      ;;
+    *)  # Preserve positional arguments
+      PARAMS="$PARAMS $(printf "%q" "$1")"
+      shift 1
+      ;;
+  esac
+done
+
+# Set positional arguments in their proper place
+eval set -- "$PARAMS"
+
+
+YOUTUBE_LINK="$1"
+if [ "$YOUTUBE_LINK" = "" ]; then
+  echo "$HELP_TEXT"
+  exit 0
+fi
+
+if [ "$LIST_SUBS" = "1" ]; then
+  yt-dlp --list-subs "$YOUTUBE_LINK"
+  exit 0
+fi
+
+if [ $# -lt 2 ]; then
+  echo "Error: Please specify at least 1 subtitle language"
+  echo
+  echo "$HELP_TEXT"
+  exit 1
+fi
+
+if [[ ! "$YOUTUBE_LINK" == https* ]]; then
+  YOUTUBE_LINK="https://youtu.be/$YOUTUBE_LINK"
+fi
+
+
+# Shift all parameters forward to work only with the subtitle languages
+shift 1
+
+SUBTITLE_LANGS=("$@")
+
+
+function main() {
+  yt-dlp -f "bestvideo[height<=720][ext=webm]+bestaudio[ext=webm]" -o "%(title)s.%(ext)s" "$YOUTUBE_LINK"
+
+  for sub_lang in "${SUBTITLE_LANGS[@]}"; do
+    case "$sub_lang" in
+      kr) sub_lang="ko" ;;
+      jp) sub_lang="ja" ;;
+      ch) sub_lang="zh" ;;
+    esac
+
+    yt-dlp --write-sub --sub-lang "$sub_lang" --convert-subs srt --skip-download -o "%(ext)s" "$YOUTUBE_LINK"
+  done
+}
+
+
+main
