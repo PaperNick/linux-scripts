@@ -1,0 +1,114 @@
+#!/usr/bin/env python
+
+import argparse
+import re
+
+from pathlib import Path
+from textwrap import dedent
+
+
+def parse_timestamp_ms(timestamp: str) -> int:
+    """
+    Parses a timestamp string in the format "HH:MM:SS.ms" into milliseconds.
+
+    Args:
+        timestamp: The timestamp string to parse.
+        Example: "0:00:08.48"
+    Returns:
+        The timestamp in milliseconds as an integer.
+    Raises:
+        ValueError: If the timestamp string is not in the expected format.
+    """
+    hh, mm, ss, ms = map(int, re.split(r":|\.", timestamp))
+    timestamp_ms = (((hh * 3600) + (mm * 60) + ss) * 1000) + ms
+    return timestamp_ms
+
+
+def align_overlapping_times(sub_file: str) -> str:
+    """
+    Fixes overlapping start and end times in an ASS subtitle file by aligning
+    the end time of the dialogue with the start time of the next one.
+
+    Args:
+        sub_file: The content of the ASS subtitle file as a string.
+    Returns:
+        The modified subtitle file content as a string with overlapping times aligned.
+
+    Example of overlapping time:
+        ```
+        Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+        Dialogue: 0,0:01:31.96,0:01:35.10,Default,,0,0,0,,Subtitle text 1
+        Dialogue: 0,0:01:35.09,0:01:40.09,Default,,0,0,0,,Subtitle text 2
+        ```
+        In this example, the end time of the first subtitle (0:01:35.10) and the
+        start time of the second subtitle (0:01:35.09) are very close, potentially
+        causing issues during playback. This function will align the end time of
+        the first subtitle to match the start time of the second subtitle.
+    """
+    file_lines = sub_file.splitlines()
+    processed_lines = []
+    next_line = ""
+    for ind, current_line in enumerate(file_lines):
+        current_line = current_line.strip()
+        try:
+            next_line = file_lines[ind + 1].strip()
+        except IndexError:
+            next_line = ""
+
+        if current_line.startswith("Dialogue:") and next_line.startswith("Dialogue:"):
+            current_line_parts = current_line.split(",")
+            next_line_parts = next_line.split(",")
+
+            current_end_time = current_line_parts[2].strip()
+            next_start_time = next_line_parts[1].strip()
+
+            if current_end_time != next_start_time:
+                if parse_timestamp_ms(current_end_time) > parse_timestamp_ms(next_start_time):
+                    # Invalid end time detected. Align the overlapping start and end times
+                    current_line_parts[2] = next_start_time
+                    current_line = ",".join(current_line_parts)
+
+        processed_lines.append(current_line)
+
+    # Use POSIX line end for all platforms:
+    # https://docs.python.org/3/library/os.html#os.linesep
+    return "\n".join(processed_lines)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=dedent(
+            """
+            Corrects overlapping start/end times in ASS subtitle files.
+
+            This CLI tool is helpful when converting subtitles with
+            higher time precision (e.g., SRT), where rounding errors
+            can sometimes lead to overlaps.
+            """
+        )
+    )
+    parser.add_argument("subtitle_file", help="The path to the ASS subtitle file")
+    args = parser.parse_args()
+
+    sub_file = Path(args.subtitle_file)
+    if not sub_file.exists():
+        print(f"Error: File '{sub_file}' doesn't exist")
+        exit(1)
+    if sub_file.suffix.lower() != ".ass":
+        print("Error: Only ASS subtitle files are supported")
+        exit(1)
+
+    sub_file_text = sub_file.read_text()
+    aligned_sub_file_text = align_overlapping_times(sub_file_text)
+
+    if sub_file_text.strip() == aligned_sub_file_text.strip():
+        print("No overlapping start and end times found")
+    else:
+        new_sub_file = Path(f"{sub_file.with_suffix('')} (aligned){sub_file.suffix}")
+        new_sub_file.write_text(aligned_sub_file_text)
+        print(f"Overlapping times have been fixed! Saving to: '{new_sub_file}'")
+
+
+if __name__ == "__main__":
+    main()
