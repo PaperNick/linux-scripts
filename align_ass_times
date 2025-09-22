@@ -5,6 +5,27 @@ import re
 
 from pathlib import Path
 from textwrap import dedent
+from typing import Optional
+
+
+def find_column_index(format_line: str, search_column: str) -> Optional[int]:
+    """
+    Finds the index of a specified column within a Format subtitle line.
+
+    Args:
+        format_line: A string representing the format line of the subtitle file, typically in the format:
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
+        search_column: The name of the column to search for (case-insensitive)
+
+    Returns:
+        The index of the specified column in the format line, or None if the column is not found.
+
+    Example:
+        If format_line="Format: Layer, Start, End, Text" and search_column="End", the function returns 2.
+    """
+    search_column = search_column.lower()
+    columns = map(lambda l: l.strip().lower(), format_line.removeprefix('Format:').split(','))
+    return next((ind for ind, column_name in enumerate(columns) if column_name == search_column), None)
 
 
 def parse_timestamp_ms(timestamp: str) -> int:
@@ -46,8 +67,9 @@ def align_overlapping_times(sub_file: str) -> str:
         the first subtitle to match the start time of the second subtitle.
     """
     file_lines = sub_file.splitlines()
+    start_column_ind = None
+    end_column_ind = None
     processed_lines = []
-    next_line = ""
     for ind, current_line in enumerate(file_lines):
         current_line = current_line.strip()
         try:
@@ -55,17 +77,20 @@ def align_overlapping_times(sub_file: str) -> str:
         except IndexError:
             next_line = ""
 
-        if current_line.startswith("Dialogue:") and next_line.startswith("Dialogue:"):
+        if current_line.startswith("Format:"):
+            start_column_ind = find_column_index(current_line, "Start")
+            end_column_ind = find_column_index(current_line, "End")
+        elif current_line.startswith("Dialogue:") and next_line.startswith("Dialogue:"):
             current_line_parts = current_line.split(",")
             next_line_parts = next_line.split(",")
 
-            current_end_time = current_line_parts[2].strip()
-            next_start_time = next_line_parts[1].strip()
+            current_end_time = current_line_parts[end_column_ind].strip()
+            next_start_time = next_line_parts[start_column_ind].strip()
 
             if current_end_time != next_start_time:
                 if parse_timestamp_ms(current_end_time) > parse_timestamp_ms(next_start_time):
                     # Invalid end time detected. Align the overlapping start and end times
-                    current_line_parts[2] = next_start_time
+                    current_line_parts[end_column_ind] = next_start_time
                     current_line = ",".join(current_line_parts)
 
         processed_lines.append(current_line)
