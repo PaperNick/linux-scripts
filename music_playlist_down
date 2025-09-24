@@ -23,11 +23,12 @@ Optional arguments:
     More info: https://github.com/yt-dlp/yt-dlp?tab=readme-ov-file#preset-aliases
 
   -s, --step: From which step to start the execution
-    Possible values: 1, 2 ,3
+    Possible values: 1, 2, 3, 4
 
     Step 1: Extract video IDs from the playlist
     Step 2: Download audio files from playlist
     Step 3: Retrieve titles, sanitize them and rename the resulting files
+    Step 4: Download the album cover art
 
   -h, --help: Show the help text
 EOF
@@ -54,7 +55,7 @@ while [ $# -gt 0 ]; do
       ;;
     -s|--step)
       START_EXECUTION_STEP="$2"
-      if [ "$START_EXECUTION_STEP" -lt 1 ] || [ "$START_EXECUTION_STEP" -gt 3 ]; then
+      if [ "$START_EXECUTION_STEP" -lt 1 ] || [ "$START_EXECUTION_STEP" -gt 4 ]; then
         echo "Invalid execution step provided. Please specify a correct value."
         echo
         echo "$HELP_TEXT"
@@ -92,12 +93,15 @@ START_EXECUTION_STEP="${START_EXECUTION_STEP:-1}"
 YOUTUBE_IDS_FILE="Album.txt"
 YT_DLP_FORMAT="bestaudio"
 
-PLAYLIST_URL="$1"
+PLAYLIST_URL="$(echo "$1" | sed 's|https://music|https://www|g')"
 if [ "$PLAYLIST_URL" = "" ]; then
   echo "Please specify a YouTube music playlist as first param."
   echo
   echo "$HELP_TEXT"
   exit 1
+fi
+if [ "${PLAYLIST_URL:0:5}" != "https" ]; then
+  PLAYLIST_URL="https://www.youtube.com/playlist?list=$PLAYLIST_URL"
 fi
 
 declare -A song_format_to_file_extension
@@ -114,6 +118,18 @@ function check_dependencies() {
 
   if [ "$(command -v jq)" = "" ]; then
     echo '"jq" is not installed on this system. Aborting script.'
+    echo "$HELP_TEXT"
+    exit 1
+  fi
+
+  if [ "$(command -v curl)" = "" ]; then
+    echo '"curl" is not installed on this system. Aborting script.'
+    echo "$HELP_TEXT"
+    exit 1
+  fi
+
+  if [ "$(command -v convert)" = "" ]; then
+    echo '"convert" (imagemagick package) is not installed on this system. Aborting script.'
     echo "$HELP_TEXT"
     exit 1
   fi
@@ -216,10 +232,22 @@ function step_3() {
   done
 }
 
+function step_4() {
+  echo 'Step 4: Downloading album cover...'
+
+  local cover_url="$(curl --silent "$PLAYLIST_URL" | grep -oP 'meta name="twitter:image" content="\K[^"]+' | grep maxresdefault | sed 's|&amp;|\&|g')"
+  curl --silent "$cover_url" -o "maxresdefault.png" && convert "maxresdefault.png" "Cover.jpg" && rm "maxresdefault.png"
+
+  if [ "$?" != "0" ]; then
+    echo "Error: Failed to download album cover art"
+    exit 1
+  fi
+}
+
 
 function main() {
   # Dynamically execute a function from the selected step until the end
-  for ind in $(seq "$START_EXECUTION_STEP" 3); do
+  for ind in $(seq "$START_EXECUTION_STEP" 4); do
     "step_$ind"
   done
 
