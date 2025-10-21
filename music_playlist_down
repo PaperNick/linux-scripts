@@ -217,6 +217,7 @@ function step_3() {
 
     if [ ! -f "$old_filename" ]; then
       echo "Cannot find song: $youtube_id.$file_extension"
+      ind=$((ind+1))
       continue
     fi
 
