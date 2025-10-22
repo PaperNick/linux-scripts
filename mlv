@@ -62,7 +62,7 @@ function __mlv() {
 
   if [ "$arg_length" = "1" ]; then
     # Show countries
-    words="$(mullvad relay list | grep -oP '^[A-Za-z]+\s+\(\K[a-z]+')"
+    words="$(mullvad relay list | grep -oP '^[A-Za-z]+([A-Za-z]|\s)+\(\K[a-z]+')"
     COMPREPLY=($(compgen -W "$words" "$country"))
   elif [ "$arg_length" = "2" ]; then
     # Show cities
@@ -126,7 +126,7 @@ server="$3"
 
 if [ "$country" = "" ]; then
   # Assign a random country
-  country="$(mullvad relay list | grep -oP '^[A-Za-z]+\s+\(\K[a-z]+' | shuf -n 1)"
+  country="$(mullvad relay list | grep -oP '^[A-Za-z]+([A-Za-z]|\s)+\(\K[a-z]+' | shuf -n 1)"
 fi
 
 if [ "$city" = "" ]; then
