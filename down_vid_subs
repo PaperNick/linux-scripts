@@ -26,6 +26,7 @@ Positional arguments:
 
 Optional arguments:
   -l, --list-subs: Show the available subtitles for <video_url> and exit.
+  -s, --subs-only: Download only the subtitles of <video_url>.
   -h, --help: Show the help text.
 
 Example Usage:
@@ -41,6 +42,10 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -l|--list-subs)
       LIST_SUBS="1"
+      shift 1
+      ;;
+    -s|--subs-only)
+      DOWNLOAD_SUBS_ONLY="1"
       shift 1
       ;;
     -h|--help)
@@ -98,7 +103,9 @@ SUBTITLE_LANGS=("$@")
 
 
 function main() {
-  yt-dlp -f "bestvideo[height<=720][ext=webm]+bestaudio[ext=webm]" -o "%(title)s.%(ext)s" "$YOUTUBE_LINK"
+  if [ "$DOWNLOAD_SUBS_ONLY" != "1" ]; then
+    yt-dlp -f "bestvideo[height<=720][ext=webm]+bestaudio[ext=webm]" -o "%(title)s.%(ext)s" "$YOUTUBE_LINK"
+  fi
 
   for sub_lang in "${SUBTITLE_LANGS[@]}"; do
     case "$sub_lang" in
