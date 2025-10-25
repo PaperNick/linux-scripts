@@ -76,7 +76,11 @@ eval set -- "$PARAMS"
 YOUTUBE_LINK="$1"
 if [ "$YOUTUBE_LINK" = "" ]; then
   echo "$HELP_TEXT"
-  exit 0
+  exit 1
+fi
+
+if [[ ! "$YOUTUBE_LINK" == https* ]]; then
+  YOUTUBE_LINK="https://youtu.be/$YOUTUBE_LINK"
 fi
 
 if [ "$LIST_SUBS" = "1" ]; then
@@ -91,9 +95,6 @@ if [ $# -lt 2 ]; then
   exit 1
 fi
 
-if [[ ! "$YOUTUBE_LINK" == https* ]]; then
-  YOUTUBE_LINK="https://youtu.be/$YOUTUBE_LINK"
-fi
 
 
 # Shift all parameters forward to work only with the subtitle languages
