@@ -1,0 +1,147 @@
+#!/usr/bin/env python
+
+import argparse
+import re
+
+from pathlib import Path
+from textwrap import dedent
+from typing import Optional
+
+
+positions = {
+  "top-left": r"{\an7}",
+  "tl": r"{\an7}",
+  "top-center": r"{\an8}",
+  "tc": r"{\an8}",
+  "top-right": r"{\an9}",
+  "tr": r"{\an9}",
+  "middle-left": r"{\an4}",
+  "ml": r"{\an4}",
+  "middle-center": r"{\an5}",
+  "mc": r"{\an5}",
+  "middle-right": r"{\an6}",
+  "mr": r"{\an6}",
+  "bottom-left": r"{\an1}",
+  "bl": r"{\an1}",
+  "bottom-center": r"{\an2}",
+  "bc": r"{\an2}",
+  "bottom-right": r"{\an3}",
+  "br": r"{\an3}",
+  "reset": "",
+  "r": "",
+}
+
+all_positions = set(filter(lambda p: bool(p), positions.values()))
+
+
+def find_column_index(format_line: str, search_column: str) -> Optional[int]:
+    """
+    Finds the index of a specified column within a Format subtitle line.
+
+    Args:
+        format_line: A string representing the format line of the subtitle file, typically in the format:
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
+        search_column: The name of the column to search for (case-insensitive)
+
+    Returns:
+        The index of the specified column in the format line, or None if the column is not found.
+
+    Example:
+        If format_line="Format: Layer, Start, End, Text" and search_column="End", the function returns 2.
+    """
+    search_column = search_column.lower()
+    columns = map(lambda l: l.strip().lower(), format_line.removeprefix("Format:").split(","))
+    return next((ind for ind, column_name in enumerate(columns) if column_name == search_column), None)
+
+
+def change_subtitle_text_position(sub_file: str, new_position: str) -> str:
+    """
+    Changes the position of subtitle text in an ASS sub file.
+
+    Args:
+        sub_file: The content of the ASS subtitle file as a string.
+        new_position: The new position for the subtitle text.  Must be a valid key from the `positions` dictionary.
+
+    Returns:
+        The modified subtitle file content as a string with the text position changed.
+
+    Example:
+        To change the position to top-left, call the function like this:
+        change_subtitle_text_position("your_subtitle.ass", "top-left")
+    """
+    file_lines = sub_file.splitlines()
+    text_column_ind = None
+    processed_lines = []
+    for ind, current_line in enumerate(file_lines):
+        current_line = current_line.strip()
+
+        if current_line.startswith("Format:"):
+            text_column_ind = find_column_index(current_line, "Text")
+
+        if current_line.startswith("Dialogue:"):
+            current_line_parts = current_line.split(",")
+            current_line_text = current_line_parts[text_column_ind].strip()
+
+            for prefix in all_positions:
+                if current_line_text.startswith(prefix):
+                    current_line_text = current_line_text.removeprefix(prefix)
+                    break
+
+            new_line_text = f"{new_position}{current_line_text}"
+            current_line_parts[text_column_ind] = new_line_text
+            current_line = ",".join(current_line_parts)
+
+        processed_lines.append(current_line)
+
+    # Use POSIX line end for all platforms:
+    # https://docs.python.org/3/library/os.html#os.linesep
+    return "\n".join(processed_lines)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=dedent(
+            """
+            Change the position of subtitle text in ASS sub files.
+
+            Available positions: (long|short). You can pass either the long or short version of the arg:
+              top-left|tl,
+              top-center|tc,
+              top-right|tr,
+              middle-left|ml,
+              middle-center|mc,
+              middle-right|mr,
+              bottom-left|bl,
+              bottom-center|bc,
+              bottom-right|br,
+              reset|r
+            """
+        )
+    )
+    parser.add_argument("subtitle_file", help="The path to the ASS subtitle file")
+    parser.add_argument("position", help="The new position of the subtitle text")
+    args = parser.parse_args()
+
+    sub_file = Path(args.subtitle_file)
+    if not sub_file.exists():
+        print(f"Error: File '{sub_file}' doesn't exist")
+        exit(1)
+    if sub_file.suffix.lower() != ".ass":
+        print("Error: Only ASS subtitle files are supported")
+        exit(1)
+
+    if args.position not in positions:
+        print(f"Error: Invalid position '{args.position}'. Available positions are: {', '.join(positions.keys())}")
+        exit(1)
+
+    sub_file_text = sub_file.read_text()
+    aligned_sub_file_text = change_subtitle_text_position(sub_file_text, positions[args.position])
+
+    new_sub_file = Path(f"{sub_file.with_suffix("")} ({args.position}){sub_file.suffix}")
+    new_sub_file.write_text(aligned_sub_file_text)
+    print(f"Subtitle position has been changed to {args.position}! Saving to: '{new_sub_file}'")
+
+
+if __name__ == "__main__":
+    main()
