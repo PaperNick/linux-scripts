@@ -25,5 +25,10 @@ toggle_tapping() {
   fi
 }
 
+for param in "$@"; do 
+  if [ "$param" = "-d" ]; then
+    debug
+  fi
+done
 
 toggle_tapping
