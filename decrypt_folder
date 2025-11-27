@@ -1,0 +1,27 @@
+#!/bin/bash
+
+encrypted_archive="$1"
+if [ ! -f "$encrypted_archive" ]; then
+  echo 'Please specify a gpgtar archive ending with ".gpg"'
+  exit 1
+fi
+
+if [ "${encrypted_archive: -4}" != ".gpg" ]; then
+  echo 'Please specify a gpgtar archive ending with ".gpg"'
+  exit 1
+fi
+
+read -r -s -p "Enter the passphrase: " passphrase
+
+escaped_passphrase="$(printf "%q" "$passphrase")"
+decrypted_location="${encrypted_archive%.*}_decrypted"
+
+mkdir -p "$decrypted_location"
+gpgtar --decrypt --directory "$decrypted_location" --gpg-args "--passphrase=$escaped_passphrase --batch" "$encrypted_archive"
+
+if [ "$?" = "0" ]; then
+  echo "Success! Decrypted file contents to: '$decrypted_location'"
+elif [ "$(find "$decrypted_location" -type d -empty)" != "" ]; then
+  # Cleanup the empty folder
+  rmdir --ignore-fail-on-non-empty "$decrypted_location"
+fi
