@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# Inspired by: https://www.baeldung.com/linux/encrypting-decrypting-directory
+
+folder_to_encrypt="$1"
+if [ ! -d "$folder_to_encrypt" ]; then
+  echo 'Please specify a valid folder to encrypt as first param'
+  exit 1
+fi
+
+if [ "$(find "$folder_to_encrypt" -type d -empty)" != "" ]; then
+  echo 'The specified folder is empty. Aborting.'
+  exit 1
+fi
+
+read -r -s -p "Enter a passphrase (alphanumeric + punctuation allowed): " passphrase
+echo
+read -r -s -p "Confirm passphrase: " confirm_passphrase
+echo
+
+if [ "$passphrase" != "$confirm_passphrase" ]; then
+  echo 'Pass phrases do not match. Aborting.'
+  exit 1
+fi
+
+escaped_passphrase="$(printf "%q" "$passphrase")"
+encrypted_file="$(dirname "$folder_to_encrypt")/$(basename "$folder_to_encrypt").gpg"
+
+if [ -f "$encrypted_file" ]; then
+  read -r -p "Encrypted file '$encrypted_file' already exists. Overwrite? [y/N] " overwrite_output_file
+  if [ "${overwrite_output_file:0:1}" != "y" ]; then
+    echo 'Operation aborted.'
+    exit 0
+  else
+    # Remove the old encrypted file
+    rm "$encrypted_file"
+  fi
+fi
+
+gpgtar --encrypt --symmetric --output "$encrypted_file" --gpg-args="--passphrase=$escaped_passphrase --batch" "$folder_to_encrypt"
+
+if [ "$?" = "0" ]; then
+  echo "Success! Encrypted file location: '$encrypted_file'"
+fi
