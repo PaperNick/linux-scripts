@@ -4,6 +4,7 @@
 
 import re
 import argparse
+from pathlib import Path
 
 
 def process_line(line):
@@ -20,7 +21,7 @@ def process_line(line):
     return line_ms, chapter_name
 
 
-def convert_chapters(input_file, output_file):
+def convert_chapters(input_file):
     with open(input_file, "r") as f:
         lines = f.readlines()
 
@@ -48,8 +49,10 @@ def convert_chapters(input_file, output_file):
         )
         output.append(chapter_info)
 
-    with open(output_file, "w") as f:
-        f.write("\n".join(output))
+
+    output_file = Path(f"{Path(input_file).with_suffix("")}.ffmeta")
+    output_file.write_text("\n".join(output))
+    print(f"Conversion complete! Chapter file saved to: '{output_file}'")
 
 
 if __name__ == "__main__":
@@ -57,8 +60,6 @@ if __name__ == "__main__":
         description="Convert chapters file to FFmpeg metadata format."
     )
     parser.add_argument("input_file", help="Path to the input chapters file.")
-    parser.add_argument("output_file", help="Path to the output FFmpeg metadata file.")
     args = parser.parse_args()
 
-    convert_chapters(args.input_file, args.output_file)
-    print("Conversion complete.")
+    convert_chapters(args.input_file)
