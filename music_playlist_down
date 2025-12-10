@@ -78,7 +78,7 @@ while [ $# -gt 0 ]; do
       exit 1
       ;;
     *)  # Preserve positional arguments
-      PARAMS="$PARAMS '$1'"
+      PARAMS="$PARAMS $(printf "%q" "$1")"
       shift 1
       ;;
   esac
