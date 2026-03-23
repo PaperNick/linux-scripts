@@ -84,17 +84,23 @@ function check_dependencies() {
 }
 
 function check_files() {
+  local has_missing_files=0
+
   if [ ! -f "$VIDEO_FILE" ]; then
     echo "Error: Video file '$VIDEO_FILE' not found."
-    exit 1
+    has_missing_files=1
   fi
 
   for sub_file in "${SUBTITLE_FILES[@]}"; do
     if [ ! -f "$sub_file" ]; then
       echo "Error: Subtitle file '$sub_file' not found."
-      exit 1
+      has_missing_files=1
     fi
   done
+
+  if [ "$has_missing_files" = "1" ]; then
+    exit 1
+  fi
 }
 
 function infer_language() {
