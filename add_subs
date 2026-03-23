@@ -166,12 +166,14 @@ function main() {
   if [ -f "$OUTPUT_FILE" ]; then
     read -r -p "File '$OUTPUT_FILE' already exists. Overwrite? [y/N] " overwrite_output_file
     if [ "${overwrite_output_file:0:1}" != "y" ]; then
-      exit 0
+      OUTPUT_FILE="${VIDEO_FILE%.*} (subs).mkv"
     fi
   fi
 
   # Pass the -y flag to ffmpeg to overwrite the existing file
   echo "$(build_ffmpeg_command) -y" | bash
+  echo
+  echo "Output file with subtitles saved to: '$OUTPUT_FILE'"
 }
 
 
