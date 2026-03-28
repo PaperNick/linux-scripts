@@ -1,0 +1,405 @@
+#!/bin/bash
+
+set -euo pipefail
+
+# Installation:
+# Move this file in ~/.local/bin
+
+if [ "$(command -v ffmpeg)" = "" ]; then
+  echo '"ffmpeg" is not installed on this system. Aborting script.'
+  exit 1
+fi
+
+if [ "$(command -v python)" = "" ]; then
+  echo '"python" is not installed on this system. Aborting script.'
+  exit 1
+fi
+
+if [ "$(command -v pactl)" = "" ]; then
+  echo '"pactl" (PulseAudio) is not installed on this system. Aborting script.'
+  exit 1
+fi
+
+if [ "$(command -v xdpyinfo)" = "" ]; then
+  echo '"xdpyinfo" (X11 server) is not installed on this system. Aborting script.'
+  exit 1
+fi
+
+
+SCRIPT_NAME="$(basename "$(readlink -f "$0")")"
+
+FFMPEG_HLS_DIR="/tmp/ffmpeg_desktop_stream_hls"
+STREAM_FILE_NAME="Stream.m3u8"
+EXCLUDE_INPUT_AUDIO=0
+EXCLUDE_OUTPUT_AUDIO=0
+EXCLUDE_VIDEO=0
+VIDEO_FPS=30
+VIDEO_QUALITY=23
+CROP_SIZE="$(xdpyinfo | awk '/dimensions/{print $2}')"
+SCALE_VIDEO_SIZE=""
+AUDIO_BITRATE=192k
+HTTP_PORT="8080"
+DEBUG_MODE="0"
+
+# Use `pactl list short sources` to see all available devices.
+# Note: you can set a default input source through PulseAudio widget in panel.
+#
+# If the pattern isn't found grep exits with nonzero. Since we set -e flag, this stops the script execution.
+# Return an empty string in the subshell to continue execution regardless of the grep result.
+AUDIO_SOURCE_OUTPUT="$(pactl list sources short | grep -o "$(pactl get-default-sink).monitor" || echo "")"
+AUDIO_SOURCE_INPUT="$(pactl get-default-source)"
+
+
+HELP_TEXT=$(cat <<EOF
+Usage: $SCRIPT_NAME [OPTIONS]
+
+Stream your desktop over Wi-Fi with ffmpeg.
+
+Optional arguments:
+  --no-audio: Exclude both input (mic) and output (speakers) audio from the stream
+  --no-input-audio: Exclude audio input from the stream (microphone)
+  --no-output-audio: Exclude audio output from the stream (speakers)
+  --no-video: Exclude the desktop video feed from the stream
+  -fps, --frames <fps_number>: Specify the frame rate of the video
+    Default: 30
+  -q, --quality <crf_number>: Specify the video quality (lower is better)
+    Default: 23
+  -c, --crop-size <width>x<height>: Specify the crop area of the screen that should be streamed
+    Example: 1920x1080
+  -s, --scale <width>x<height>: Specify the output video resolution
+    Example: 1280x720
+  -b:a, --audio-bitrate <bitrate>: Specify the audio bitrate in kbps
+    Default: 192k
+  -p, --port <port_number>: Specify the port for the HTTP server
+    Default: 8080
+  --audio-source-input <device_name>: Specify a manual input device from PulseAudio
+    Example: alsa_input.usb-XXX.analog-stereo
+  --audio-source-output <device_name>: Specify a manual output device from PulseAudio
+    Example: alsa_output.usb-XXX.analog-stereo.monitor
+    Note: select an output Monitor device to work properly
+
+  -d, --debug: Debug the specified params and selected stream function without executing it
+  -h, --help: Show the help text
+
+
+Firewall:
+  Make sure your firewall has port 8080 open (or the one you specified) in order to access the stream.
+
+Test stream playback:
+  ffplay http://<your_desktop_ip>:8080/Stream.m3u8
+
+Play in Kodi:
+  To play the live feed in Kodi, either type in the Stream URL or create a m3u file with the following content:
+
+  #EXTM3U
+  #EXTINF:-1,Live Desktop Feed
+  http://<your_desktop_ip>:8080/Stream.m3u8
+EOF
+)
+
+PARAMS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-audio)
+      EXCLUDE_INPUT_AUDIO="1"
+      EXCLUDE_OUTPUT_AUDIO="1"
+      shift 1
+      ;;
+    --no-input-audio)
+      EXCLUDE_INPUT_AUDIO="1"
+      shift 1
+      ;;
+    --no-output-audio)
+      EXCLUDE_OUTPUT_AUDIO="1"
+      shift 1
+      ;;
+    --no-video)
+      EXCLUDE_VIDEO="1"
+      shift 1
+      ;;
+    --audio-source-input)
+      AUDIO_SOURCE_INPUT="$2"
+      shift 2
+      ;;
+    --audio-source-output)
+      AUDIO_SOURCE_OUTPUT="$2"
+      shift 2
+      ;;
+    -fps|--frames)
+      VIDEO_FPS="$2"
+      if ! [[ "$VIDEO_FPS" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: -fps, --frames argument must be a number."
+        echo
+        echo "$HELP_TEXT"
+        exit 1
+      fi
+      shift 2
+      ;;
+    -q|--quality)
+      VIDEO_QUALITY="$2"
+      if ! [[ "$VIDEO_QUALITY" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: -q, --quality argument must be a number."
+        echo
+        echo "$HELP_TEXT"
+        exit 1
+      fi
+      shift 2
+      ;;
+    -c|--crop-size)
+      CROP_SIZE="$2"
+      if ! [[ "$CROP_SIZE" =~ ^[0-9]+x[0-9]+$ ]]; then
+        echo "ERROR: -c, --crop-size argument must be in the format <width>x<height> (e.g., 1920x1080)."
+        echo
+        echo "$HELP_TEXT"
+        exit 1
+      fi
+      shift 2
+      ;;
+    -s|--scale)
+      SCALE_VIDEO_SIZE="$2"
+      if ! [[ "$SCALE_VIDEO_SIZE" =~ ^[0-9]+x[0-9]+$ ]]; then
+        echo "ERROR: -s, --scale argument must be in the format <width>x<height> (e.g., 1280x720)."
+        echo
+        echo "$HELP_TEXT"
+        exit 1
+      fi
+      SCALE_VIDEO_SIZE="${SCALE_VIDEO_SIZE//x/:}"
+      shift 2
+      ;;
+    -b:a|--audio-bitrate)
+      AUDIO_BITRATE="${2%k}"
+      if ! [[ "$AUDIO_BITRATE" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: -b:a, --audio-bitrate argument must be a number."
+        echo
+        echo "$HELP_TEXT"
+        exit 1
+      fi
+      AUDIO_BITRATE="${AUDIO_BITRATE}k"
+      shift 2
+      ;;
+    -p|--port)
+      HTTP_PORT="$2"
+      if ! [[ "$HTTP_PORT" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: -p, --port argument must be a number."
+        echo
+        echo "$HELP_TEXT"
+        exit 1
+      fi
+      shift 2
+      ;;
+    -d|--debug)
+      DEBUG_MODE="1"
+      shift 1
+      ;;
+    -h|--help)
+      echo "$HELP_TEXT"
+      exit 0
+      ;;
+    --)  # End argument parsing
+      shift 1
+      break
+      ;;
+    -*|--*=)  # Unsupported flags
+      echo "ERROR: Unsupported flag $1"
+      echo
+      echo "$HELP_TEXT"
+      exit 1
+      ;;
+    *)  # Preserve positional arguments
+      PARAMS="$PARAMS $(printf "%q" "$1")"
+      shift 1
+      ;;
+  esac
+done
+
+# Set positional arguments in their proper place
+eval set -- "$PARAMS"
+
+
+if [ "$AUDIO_SOURCE_OUTPUT" = "" ] && [ "$EXCLUDE_OUTPUT_AUDIO" != "1" ]; then
+  echo "WARNING: Could not find the 'Monitor' source of the default PulseAudio sink. Skipping audio output stream."
+  echo
+  EXCLUDE_OUTPUT_AUDIO="1"
+fi
+
+if [ "$SCALE_VIDEO_SIZE" = "" ]; then
+  SCALE_VIDEO_SIZE="${CROP_SIZE//x/:}"
+fi
+
+
+stream_video_only() {
+  ffmpeg -f x11grab -video_size "$CROP_SIZE" -framerate "$VIDEO_FPS" -i :0.0 \
+    -c:v libx264 -preset veryfast -crf "$VIDEO_QUALITY" -g 60 -sc_threshold 0 \
+    -f hls -hls_time 2 -hls_list_size 5 -hls_flags delete_segments \
+    -vf "scale=$SCALE_VIDEO_SIZE" \
+    "$FFMPEG_HLS_DIR/$STREAM_FILE_NAME" &
+}
+
+
+stream_video_and_audio_input() {
+  ffmpeg -f x11grab -video_size "$CROP_SIZE" -framerate "$VIDEO_FPS" -i :0.0 \
+    -f pulse -i "$AUDIO_SOURCE_INPUT" \
+    -map 0:v -map 1:a \
+    -c:v libx264 -preset veryfast -crf "$VIDEO_QUALITY" -g 60 -sc_threshold 0 \
+    -c:a aac -b:a "$AUDIO_BITRATE" -ac 2 \
+    -f hls -hls_time 2 -hls_list_size 5 -hls_flags delete_segments \
+    -vf "scale=$SCALE_VIDEO_SIZE" \
+    "$FFMPEG_HLS_DIR/$STREAM_FILE_NAME" &
+}
+
+
+stream_video_and_audio_output() {
+  ffmpeg -f x11grab -video_size "$CROP_SIZE" -framerate "$VIDEO_FPS" -i :0.0 \
+    -f pulse -i "$AUDIO_SOURCE_OUTPUT" \
+    -map 0:v -map 1:a \
+    -c:v libx264 -preset veryfast -crf "$VIDEO_QUALITY" -g 60 -sc_threshold 0 \
+    -c:a aac -b:a "$AUDIO_BITRATE" -ac 2 \
+    -f hls -hls_time 2 -hls_list_size 5 -hls_flags delete_segments \
+    -vf "scale=$SCALE_VIDEO_SIZE" \
+    "$FFMPEG_HLS_DIR/$STREAM_FILE_NAME" &
+}
+
+
+stream_video_and_audio_input_output() {
+  ffmpeg -f x11grab -video_size "$CROP_SIZE" -framerate "$VIDEO_FPS" -i :0.0 \
+    -f pulse -i "$AUDIO_SOURCE_OUTPUT" \
+    -f pulse -i "$AUDIO_SOURCE_INPUT" \
+    -filter_complex "[1:a][2:a]amix=inputs=2[aout]" \
+    -map 0:v -map "[aout]" \
+    -c:v libx264 -preset veryfast -crf "$VIDEO_QUALITY" -g 60 -sc_threshold 0 \
+    -c:a aac -b:a "$AUDIO_BITRATE" -ac 2 \
+    -f hls -hls_time 2 -hls_list_size 5 -hls_flags delete_segments \
+    -vf "scale=$SCALE_VIDEO_SIZE" \
+    "$FFMPEG_HLS_DIR/$STREAM_FILE_NAME" &
+}
+
+
+stream_audio_input() {
+  ffmpeg -f pulse -i "$AUDIO_SOURCE_INPUT" \
+    -map 0:a \
+    -c:a aac -b:a "$AUDIO_BITRATE" -ac 2 \
+    -f hls -hls_time 2 -hls_list_size 5 -hls_flags delete_segments \
+    "$FFMPEG_HLS_DIR/$STREAM_FILE_NAME" &
+}
+
+
+stream_audio_output() {
+  ffmpeg -f pulse -i "$AUDIO_SOURCE_OUTPUT" \
+    -map 0:a \
+    -c:a aac -b:a "$AUDIO_BITRATE" -ac 2 \
+    -f hls -hls_time 2 -hls_list_size 5 -hls_flags delete_segments \
+    "$FFMPEG_HLS_DIR/$STREAM_FILE_NAME" &
+}
+
+stream_audio_input_output() {
+  ffmpeg -f pulse -i "$AUDIO_SOURCE_OUTPUT" \
+    -f pulse -i "$AUDIO_SOURCE_INPUT" \
+    -filter_complex "[0:a][1:a]amix=inputs=2[aout]" \
+    -map "[aout]" \
+    -c:a aac -b:a "$AUDIO_BITRATE" -ac 2 \
+    -f hls -hls_time 2 -hls_list_size 5 -hls_flags delete_segments \
+    "$FFMPEG_HLS_DIR/$STREAM_FILE_NAME" &
+}
+
+
+get_stream_function() {
+  # Read bit masks (and toggle their values because user input "excludes" options)
+  local AUDIO_INPUT_BIT=$(( 1 - EXCLUDE_INPUT_AUDIO ))
+  local AUDIO_OUTPUT_BIT=$(( 1 - EXCLUDE_OUTPUT_AUDIO ))
+  local VIDEO_BIT=$(( 1 - EXCLUDE_VIDEO ))
+
+  # Determine presence flags from bits (If the bit is set: 1, if not: 0)
+  local has_audio_input=$(( AUDIO_INPUT_BIT != 0 ? 1 : 0 ))
+  local has_audio_output=$(( AUDIO_OUTPUT_BIT != 0 ? 1 : 0 ))
+  local has_video=$(( VIDEO_BIT != 0 ? 1 : 0 ))
+
+  # Build a 3-bit key: Bit 2 = VIDEO, Bit 1 = AUDIO_OUTPUT, Bit 0 = AUDIO_INPUT
+  local key=$(( (has_video << 2) | (has_audio_output << 1) | has_audio_input ))
+
+  declare -A stream_func_map
+  stream_func_map[0]=""
+  stream_func_map[1]="stream_audio_input"
+  stream_func_map[2]="stream_audio_output"
+  stream_func_map[3]="stream_audio_input_output"
+  stream_func_map[4]="stream_video_only"
+  stream_func_map[5]="stream_video_and_audio_input"
+  stream_func_map[6]="stream_video_and_audio_output"
+  stream_func_map[7]="stream_video_and_audio_input_output"
+
+  selected_stream_func="${stream_func_map[$key]}"
+
+  if [ "$selected_stream_func" = "" ]; then
+    echo "ERROR: No video or audio sources selected to stream."
+    echo
+    echo "$HELP_TEXT"
+    exit 1
+  fi
+
+  echo "$selected_stream_func"
+}
+
+
+serve_http_stream() {
+  python -m http.server --directory "$FFMPEG_HLS_DIR" "$HTTP_PORT" &
+}
+
+
+cleanup() {
+  echo "Stopping processes..."
+  kill -TERM "$FFMPEG_PID" "$HTTP_PID" 2>/dev/null || true
+
+  # Wait for them to exit (give them a little time), then force kill if needed
+  for pid in "$FFMPEG_PID" "$HTTP_PID"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      sleep 1
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+
+  rm -rf "$FFMPEG_HLS_DIR"
+  exit 0
+}
+
+debug() {
+  echo 'DEBUG mode: ON'
+  echo
+  echo "EXCLUDE_INPUT_AUDIO=$EXCLUDE_INPUT_AUDIO"
+  echo "EXCLUDE_OUTPUT_AUDIO=$EXCLUDE_OUTPUT_AUDIO"
+  echo "EXCLUDE_VIDEO=$EXCLUDE_VIDEO"
+  echo "AUDIO_SOURCE_INPUT=$AUDIO_SOURCE_INPUT"
+  echo "AUDIO_SOURCE_OUTPUT=$AUDIO_SOURCE_OUTPUT"
+  echo "VIDEO_FPS=$VIDEO_FPS"
+  echo "VIDEO_QUALITY=$VIDEO_QUALITY"
+  echo "CROP_SIZE=$CROP_SIZE"
+  echo "SCALE_VIDEO_SIZE=$SCALE_VIDEO_SIZE"
+  echo "AUDIO_BITRATE=$AUDIO_BITRATE"
+  echo "HTTP_PORT=$HTTP_PORT"
+  echo
+  echo "Executing function: $(get_stream_function)"
+}
+
+
+main() {
+  if [ "$DEBUG_MODE" = "1" ]; then
+    debug
+    exit 0
+  fi
+
+  mkdir -p "$FFMPEG_HLS_DIR"
+  "$(get_stream_function)"
+  FFMPEG_PID=$!
+
+  serve_http_stream
+  HTTP_PID=$!
+
+  echo "Streaming on http://0.0.0.0:$HTTP_PORT/$STREAM_FILE_NAME"
+
+  # Wait for background processes; when either exits, stop the other and exit
+  wait -n "$FFMPEG_PID" "$HTTP_PID"
+  cleanup
+}
+
+
+trap cleanup INT TERM
+
+main
