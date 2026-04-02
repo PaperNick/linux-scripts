@@ -33,9 +33,10 @@ STREAM_FILE_NAME="Stream.m3u8"
 EXCLUDE_INPUT_AUDIO=0
 EXCLUDE_OUTPUT_AUDIO=0
 EXCLUDE_VIDEO=0
+DISPLAY_TO_STREAM="${DISPLAY:-:0.0}"
 VIDEO_FPS=30
 VIDEO_QUALITY=23
-CROP_SIZE="$(xdpyinfo | awk '/dimensions/{print $2}')"
+CROP_SIZE="$(xdpyinfo -display "$DISPLAY_TO_STREAM" | awk '/dimensions/{print $2}')"
 SCALE_VIDEO_SIZE=""
 AUDIO_BITRATE=192k
 HTTP_PORT="8080"
@@ -60,6 +61,10 @@ Optional arguments:
   --no-input-audio: Exclude audio input from the stream (microphone)
   --no-output-audio: Exclude audio output from the stream (speakers)
   --no-video: Exclude the desktop video feed from the stream
+  -ds, --display: The display you want to stream. By default, the selected display your session uses.
+    Default: :0.0 (read from \$DISPLAY env variable)
+    Note: Use the following command to inspect active displays and screens:
+      xdpyinfo | awk -F: '/number of screens/ {print "  screens:" \$2} /dimensions:/ {print "  " \$0}'
   -fps, --frames <fps_number>: Specify the frame rate of the video
     Default: 30
   -q, --quality <crf_number>: Specify the video quality (lower is better)
@@ -123,6 +128,14 @@ while [ $# -gt 0 ]; do
       ;;
     --audio-source-output)
       AUDIO_SOURCE_OUTPUT="$2"
+      shift 2
+      ;;
+    -ds|--display)
+      DISPLAY_TO_STREAM="$2"
+      if ! [[ "$DISPLAY_TO_STREAM" =~ ^([a-zA-Z0-9._-]+:)?[0-9]+(\.[0-9]+)?$ || "$DISPLAY_TO_STREAM" =~ ^:[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "ERROR: -ds, --display argument must be like :0, :0.0, host:10 or host:10.1"
+        exit 1
+      fi
       shift 2
       ;;
     -fps|--frames)
@@ -228,7 +241,7 @@ fi
 
 
 stream_video_only() {
-  ffmpeg -f x11grab -video_size "$CROP_SIZE" -framerate "$VIDEO_FPS" -i :0.0 \
+  ffmpeg -f x11grab -video_size "$CROP_SIZE" -framerate "$VIDEO_FPS" -i "$DISPLAY_TO_STREAM" \
     -c:v libx264 -preset veryfast -crf "$VIDEO_QUALITY" -g 60 -sc_threshold 0 \
     -f hls -hls_time 2 -hls_list_size 5 -hls_flags delete_segments \
     -vf "scale=$SCALE_VIDEO_SIZE" \
@@ -237,7 +250,7 @@ stream_video_only() {
 
 
 stream_video_and_audio_input() {
-  ffmpeg -f x11grab -video_size "$CROP_SIZE" -framerate "$VIDEO_FPS" -i :0.0 \
+  ffmpeg -f x11grab -video_size "$CROP_SIZE" -framerate "$VIDEO_FPS" -i "$DISPLAY_TO_STREAM" \
     -f pulse -i "$AUDIO_SOURCE_INPUT" \
     -map 0:v -map 1:a \
     -c:v libx264 -preset veryfast -crf "$VIDEO_QUALITY" -g 60 -sc_threshold 0 \
@@ -249,7 +262,7 @@ stream_video_and_audio_input() {
 
 
 stream_video_and_audio_output() {
-  ffmpeg -f x11grab -video_size "$CROP_SIZE" -framerate "$VIDEO_FPS" -i :0.0 \
+  ffmpeg -f x11grab -video_size "$CROP_SIZE" -framerate "$VIDEO_FPS" -i "$DISPLAY_TO_STREAM" \
     -f pulse -i "$AUDIO_SOURCE_OUTPUT" \
     -map 0:v -map 1:a \
     -c:v libx264 -preset veryfast -crf "$VIDEO_QUALITY" -g 60 -sc_threshold 0 \
@@ -261,7 +274,7 @@ stream_video_and_audio_output() {
 
 
 stream_video_and_audio_input_output() {
-  ffmpeg -f x11grab -video_size "$CROP_SIZE" -framerate "$VIDEO_FPS" -i :0.0 \
+  ffmpeg -f x11grab -video_size "$CROP_SIZE" -framerate "$VIDEO_FPS" -i "$DISPLAY_TO_STREAM" \
     -f pulse -i "$AUDIO_SOURCE_OUTPUT" \
     -f pulse -i "$AUDIO_SOURCE_INPUT" \
     -filter_complex "[1:a][2:a]amix=inputs=2[aout]" \
@@ -368,6 +381,7 @@ debug() {
   echo "EXCLUDE_VIDEO=$EXCLUDE_VIDEO"
   echo "AUDIO_SOURCE_INPUT=$AUDIO_SOURCE_INPUT"
   echo "AUDIO_SOURCE_OUTPUT=$AUDIO_SOURCE_OUTPUT"
+  echo "DISPLAY_TO_STREAM=$DISPLAY_TO_STREAM"
   echo "VIDEO_FPS=$VIDEO_FPS"
   echo "VIDEO_QUALITY=$VIDEO_QUALITY"
   echo "CROP_SIZE=$CROP_SIZE"
