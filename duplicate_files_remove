@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+
+import argparse
+import hashlib
+from enum import Enum
+from pathlib import Path
+from textwrap import dedent
+from typing import Dict, List, Set, Tuple
+
+
+class DetectionMethod(Enum):
+    NAME = "name"
+    HASH = "hash"
+
+
+def get_files_from_paths(paths: List[str]) -> List[Path]:
+    all_files: Set[Path] = set()
+
+    for path_str in paths:
+        path = Path(path_str)
+
+        if not path.exists():
+            print(f"Warning: Path '{path}' does not exist, skipping.")
+            continue
+
+        if path.is_file():
+            print(f"Warning: '{path}' is a file, not a directory. Skipping.")
+            continue
+
+        all_files.update(f for f in path.rglob('*') if f.is_file())
+
+    return list(all_files)
+
+
+def file_sha256_hash(file_path: Path) -> str:
+    file_data = file_path.read_bytes()
+    sha256_hash = hashlib.sha256(file_data)
+    return sha256_hash.hexdigest()
+
+
+def detect_duplicates_by_name(files: List[Path]) -> Dict[str, List[Path]]:
+    groups: Dict[str, List[Path]] = {}
+
+    for file_path in files:
+        name = file_path.name
+        if name not in groups:
+            groups[name] = []
+        groups[name].append(file_path)
+
+    # Return only duplicated items
+    return {name: file_list for name, file_list in groups.items() if len(file_list) > 1}
+
+
+def detect_duplicates_by_sha256_hash(files: List[Path], verbose: bool = False) -> Dict[str, List[Path]]:
+    groups: Dict[str, List[Path]] = {}
+
+    if verbose:
+        print("Calculating file hashes...")
+
+    for ind, file_path in enumerate(files):
+        file_hash = file_sha256_hash(file_path)
+        if file_hash not in groups:
+            groups[file_hash] = []
+        groups[file_hash].append(file_path)
+
+        if verbose and (ind + 1) % 100 == 0:
+            print(f"Processed {ind + 1}/{len(files)} files...")
+
+    # Return only duplicated items
+    return {hash_val: file_list for hash_val, file_list in groups.items() if len(file_list) > 1}
+
+
+def find_duplicates(files: List[Path], method: DetectionMethod, verbose: bool = False) -> Tuple[Dict[str, List[Path]], int]:
+    if method == DetectionMethod.NAME:
+        groups = detect_duplicates_by_name(files)
+    elif method == DetectionMethod.HASH:
+        groups = detect_duplicates_by_sha256_hash(files, verbose)
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+    duplicate_count = 0
+    for file_list in groups.values():
+        duplicate_count += len(file_list) - 1
+
+    return groups, duplicate_count
+
+
+def remove_duplicates(groups: Dict[str, List[Path]], dry_run: bool = False) -> int:
+    """
+    Remove duplicate files, keeping the first occurrence in each group.
+    """
+    removed_count = 0
+
+    for file_list in groups.values():
+        for duplicate_file in file_list[1:]:
+            if dry_run:
+                print(f"[DRY RUN] Would remove: {duplicate_file}")
+            else:
+                duplicate_file.unlink()
+                print(f"Removed: {duplicate_file}")
+            removed_count += 1
+
+    return removed_count
+
+
+def print_duplicate_summary(duplicate_groups: Dict[str, List[Path]], method: DetectionMethod):
+    if not duplicate_groups:
+        print("No duplicates found.")
+        return
+
+    print(f"\nFound {len(duplicate_groups)} groups of duplicates:")
+    print("=" * 80)
+
+    for ind, (key, files) in enumerate(duplicate_groups.items(), 1):
+        if method == DetectionMethod.NAME:
+            print(f"\nGroup {ind}: Files named '{key}'")
+        elif method == DetectionMethod.HASH:
+            print(f"\nGroup {ind}: Files with hash {key[:16]}...")
+
+        print(f"  Keeping: {files[0]}")
+        for duplicate in files[1:]:
+            print(f"  Duplicate: {duplicate}")
+
+    print("=" * 80)
+
+
+def parse_input() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Remove duplicate files based on their name or SHA256 hash",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=dedent("""
+        Examples:
+          # Scan current directory
+          %(prog)s
+          %(prog)s -m name
+          %(prog)s -m hash
+
+          # Scan multiple directories by name
+          %(prog)s -m name dir1 dir2 dir3
+
+          # Dry run to see what would be removed
+          %(prog)s -d -m name
+
+          # Skip confirmation and be verbose
+          %(prog)s -y -v -m hash
+        """)
+    )
+
+    parser.add_argument(
+        'paths',
+        nargs='*',
+        default=['.'],
+        help='Paths to scan (default: current directory)'
+    )
+
+    parser.add_argument(
+        '--method', '-m',
+        choices=[DetectionMethod.HASH.value, DetectionMethod.NAME.value],
+        default=DetectionMethod.HASH.value,
+        help=f"Detection method: {DetectionMethod.HASH.value} (SHA256) or {DetectionMethod.NAME.value} (filename) (default: {DetectionMethod.HASH.value})"
+    )
+
+    parser.add_argument(
+        '--dry-run', '-d',
+        action='store_true',
+        help='Show what would be removed without actually removing files'
+    )
+
+    parser.add_argument(
+        '--yes', '-y',
+        action='store_true',
+        help='Skip confirmation prompt and proceed with removal'
+    )
+
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Show detailed output (off by default)'
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_input()
+
+    print(f"Scanning paths: {', '.join(args.paths)}")
+    print(f"Using detection method: {args.method}")
+
+    files = get_files_from_paths(args.paths)
+
+    if not files:
+        print("No files found to scan.")
+        return 1
+
+    if args.verbose:
+        print(f"Found {len(files)} files to scan.")
+
+
+    detection_method = DetectionMethod(args.method)
+    groups, duplicate_count = find_duplicates(files, detection_method, args.verbose)
+
+    if duplicate_count == 0:
+        print("No duplicate files found.")
+        return 0
+
+    print(f"\nFound {duplicate_count} duplicate files.")
+    if args.verbose:
+        print_duplicate_summary(groups, detection_method)
+
+    # Ask for confirmation unless --yes flag is used
+    if not args.yes and not args.dry_run:
+        print(f"\n{duplicate_count} duplicate files will be removed.")
+        response = input('Press "c" to continue and remove duplicate files, or any other key to abort: ').strip()
+        if response.lower() != 'c':
+            print("Aborting duplicate files removal.")
+            return 0
+
+    removed_count = remove_duplicates(groups, args.dry_run)
+
+    if args.dry_run:
+        print(f"\n[DRY RUN] Would have removed {removed_count} duplicate files.")
+    else:
+        print(f"\nSuccessfully removed {removed_count} duplicate files.")
+
+    return 0
+
+
+if __name__ == "__main__":
+    exit(main())
