@@ -71,8 +71,10 @@ Optional arguments:
     Default: 23
   -c, --crop-size <width>x<height>: Specify the crop area of the screen that should be streamed
     Example: 1920x1080
-  -s, --scale <width>x<height>: Specify the output video resolution
-    Example: 1280x720
+  -c, --crop-size <width>x<height>|<named>: Specify the crop area of the screen that should be streamed.
+    Accepts exact resolution like 1920x1080 or named resolutions like 480p, 720p, 900p, 1080p, 1440p, 4k, 8k
+  -s, --scale <width>x<height>|<named>: Specify the output video resolution
+    Accepts exact resolution like 1280x720 or named resolutions like 480p, 720p, 900p, 1080p, 1440p, 4k, 8k
   -b:a, --audio-bitrate <bitrate>: Specify the audio bitrate in kbps
     Default: 192k
   -p, --port <port_number>: Specify the port for the HTTP server
@@ -101,6 +103,34 @@ Play in Kodi:
   http://<your_desktop_ip>:8080/Stream.m3u8
 EOF
 )
+
+
+parse_resolution() {
+  # Takes a resolution string (e.g., "1280x720", "720p", or "4K") and returns a string in <width>x<height> format.
+  # Returns 0 on success and 1 on error.
+  local resolution="$1"
+  local resolution_lowered="$(echo "$resolution" | tr '[:upper:]' '[:lower:]')"
+
+  if [[ "$resolution_lowered" =~ ^[0-9]+x[0-9]+$ ]]; then
+    # Resolution in <width>x<height> format provided, return early
+    echo "$resolution_lowered"
+    return 0
+  fi
+
+  case "$resolution_lowered" in
+    480p)  echo '854x480' ;;
+    720p)  echo '1280x720' ;;
+    900p)  echo '1600x900' ;;
+    1080p)  echo '1920x1080' ;;
+    1440p)  echo '2560x1440' ;;
+    4k|2160p)  echo '3840x2160' ;;
+    8k|4320p)  echo '7680x4320' ;;
+    *)  return 1 ;;
+  esac
+
+  return 0
+}
+
 
 PARAMS=""
 while [ $# -gt 0 ]; do
@@ -159,24 +189,23 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     -c|--crop-size)
-      CROP_SIZE="$2"
-      if ! [[ "$CROP_SIZE" =~ ^[0-9]+x[0-9]+$ ]]; then
-        echo "ERROR: -c, --crop-size argument must be in the format <width>x<height> (e.g., 1920x1080)."
+      if ! resolved_resolution="$(parse_resolution "$2")"; then
+        echo "ERROR: -c, --crop-size argument must be in the format <width>x<height> (e.g., 1920x1080) or a supported name (e.g., 1080p)."
         echo
         echo "$HELP_TEXT"
         exit 1
       fi
+      CROP_SIZE="$resolved_resolution"
       shift 2
       ;;
     -s|--scale)
-      SCALE_VIDEO_SIZE="$2"
-      if ! [[ "$SCALE_VIDEO_SIZE" =~ ^[0-9]+x[0-9]+$ ]]; then
-        echo "ERROR: -s, --scale argument must be in the format <width>x<height> (e.g., 1280x720)."
+      if ! resolved_resolution="$(parse_resolution "$2")"; then
+        echo "ERROR: -s, --scale argument must be in the format <width>x<height> (e.g., 1280x720) or a supported name (e.g., 720p)."
         echo
         echo "$HELP_TEXT"
         exit 1
       fi
-      SCALE_VIDEO_SIZE="${SCALE_VIDEO_SIZE//x/:}"
+      SCALE_VIDEO_SIZE="${resolved_resolution//x/:}"
       shift 2
       ;;
     -b:a|--audio-bitrate)
