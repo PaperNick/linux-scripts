@@ -57,10 +57,10 @@ Usage: $SCRIPT_NAME [OPTIONS]
 Stream your desktop over Wi-Fi with ffmpeg.
 
 Optional arguments:
-  --no-audio: Exclude both input (mic) and output (speakers) audio from the stream
-  --no-input-audio: Exclude audio input from the stream (microphone)
-  --no-output-audio: Exclude audio output from the stream (speakers)
-  --no-video: Exclude the desktop video feed from the stream
+  -na, --no-audio: Exclude both input (mic) and output (speakers) audio from the stream
+  -nai, --no-audio-input: Exclude audio input from the stream (microphone)
+  -nao, --no-audio-output: Exclude audio output from the stream (speakers)
+  -nv, --no-video: Exclude the desktop video feed from the stream
   -ds, --display: The display you want to stream. By default, the selected display your session uses.
     Default: :0.0 (read from \$DISPLAY env variable)
     Note: Use the following command to inspect active displays and screens:
@@ -135,20 +135,20 @@ parse_resolution() {
 PARAMS=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --no-audio)
+    -na|--no-audio)
       EXCLUDE_INPUT_AUDIO="1"
       EXCLUDE_OUTPUT_AUDIO="1"
       shift 1
       ;;
-    --no-input-audio)
+    -nai|--no-audio-input)
       EXCLUDE_INPUT_AUDIO="1"
       shift 1
       ;;
-    --no-output-audio)
+    -nao|--no-audio-output)
       EXCLUDE_OUTPUT_AUDIO="1"
       shift 1
       ;;
-    --no-video)
+    -nv|--no-video)
       EXCLUDE_VIDEO="1"
       shift 1
       ;;
