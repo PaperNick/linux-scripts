@@ -418,7 +418,8 @@ debug() {
   echo "AUDIO_BITRATE=$AUDIO_BITRATE"
   echo "HTTP_PORT=$HTTP_PORT"
   echo
-  echo "Executing function: $(get_stream_function)"
+  echo "Executing function:"
+  echo "$(export $(compgen -v) && declare -f "$(get_stream_function)" | envsubst)"
 }
 
 
