@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from textwrap import dedent
+from typing import Optional
+from urllib.parse import urlencode, quote
+from urllib.request import Request, urlopen
+
+MUSIXMATCH_BASE = "https://apic-desktop.musixmatch.com/ws/1.1"
+MUSIXMATCH_APP_ID = "web-desktop-app-v1.0"
+CAPTCHA_SLEEP_SECONDS = 30
+TOKEN_ROTATE_EVERY = 500
+REQUEST_DELAY_SEC = 5
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+)
+
+
+class MusixmatchError(Exception):
+    pass
+
+
+class ApiError(MusixmatchError):
+    pass
+
+
+class TokenError(MusixmatchError):
+    pass
+
+
+@dataclass
+class ParsedMetadata:
+    title: str = ""
+    artist: str = ""
+    album: Optional[str] = None
+
+
+@dataclass
+class Lyrics:
+    text: str = ""
+    is_synced: bool = False
+    lang_code: Optional[str] = None
+
+    @property
+    def is_plain(self) -> bool:
+        return not self.is_synced
+
+    @property
+    def clean_text(self) -> str:
+        return self.text.strip() if self.text else ""
+
+    def write_file(self, mp3_path: Path) -> Path:
+        suffix = f".{self.lang_code}.lrc" if self.lang_code else ".lrc"
+        lrc_path = mp3_path.with_suffix(suffix)
+        lrc_path.write_text(self.text, encoding="utf-8")
+        return lrc_path
+
+
+def _metadata_from_ffprobe(filepath: Path) -> Optional[ParsedMetadata]:
+    ffprobe_command = "ffprobe -v quiet -print_format json -show_format -show_streams".split()
+    result = subprocess.run(
+        [*ffprobe_command, filepath],
+        capture_output=True,
+        text=True,
+    )
+    tags = json.loads(result.stdout).get("format", {}).get("tags", {})
+    title, artist = tags.get("title"), tags.get("artist")
+    if title and artist:
+        return ParsedMetadata(title=title, artist=artist, album=tags.get("album"))
+    return None
+
+
+def _metadata_from_filename(filepath: Path) -> Optional[ParsedMetadata]:
+    """Parse "Artist - Title.mp3" (stripping leading track numbers)."""
+    cleaned = re.sub(r"^\d+\s*[.\-–—]?\s*", "", filepath.stem)
+    parts = re.split(r"\s*[\-–—]\s*", cleaned, maxsplit=1)
+    if len(parts) != 2:
+        return None
+    artist, title = parts[0].strip(), parts[1].strip()
+    return ParsedMetadata(artist=artist, title=title) if artist and title else None
+
+
+def resolve_metadata(mp3_path: Path) -> Optional[ParsedMetadata]:
+    """Try ffprobe first, fall back to filename parsing."""
+    return _metadata_from_ffprobe(mp3_path) or _metadata_from_filename(mp3_path)
+
+
+def _fetch_token(initial: bool = True) -> str:
+    """Get a fresh Musixmatch token."""
+    url = f"{MUSIXMATCH_BASE}/token.get?app_id={MUSIXMATCH_APP_ID}"
+    req = Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8")
+    except Exception as exc:
+        raise ApiError(f"Network error: {exc}") from exc
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ApiError(f"Invalid JSON response: {exc}") from exc
+
+    if not initial:
+        time.sleep(REQUEST_DELAY_SEC)
+
+    token = data.get("message", data).get("body", {}).get("user_token")
+    if not token:
+        raise TokenError("No token in response")
+    return token
+
+
+class TokenManager:
+    """Manages a Musixmatch token with periodic rotation."""
+
+    def __init__(self) -> None:
+        self.token: str = ""
+        self._use_count = 0
+
+    def acquire_initial(self) -> None:
+        print("Fetching initial Musixmatch token...")
+        self.token = _fetch_token(initial=True)
+        print(f"  Token acquired: {self.token}\n")
+
+    def count_request(self) -> None:
+        self._use_count += 1
+
+    def maybe_rotate(self, rotate_every: int) -> None:
+        if rotate_every and self._use_count >= rotate_every:
+            self._rotate()
+
+    def _rotate(self) -> None:
+        try:
+            self.token = _fetch_token()
+            self._use_count = 0
+            print(f"  Token rotated (new token: {self.token})")
+        except TokenError as exc:
+            print(f"  WARNING: Token rotation failed: {exc}. Continuing with current token.")
+
+    def retry_with_fresh_token(self, func, **kwargs):
+        """Wait for captcha, rotate token, then retry *func*."""
+        time.sleep(CAPTCHA_SLEEP_SECONDS)
+        self._rotate()
+        time.sleep(REQUEST_DELAY_SEC)
+        return func(token=self.token, **kwargs)
+
+
+def _macro_subtitles(title: str, artist: str, token: str) -> dict:
+    """Fetch macro subtitles response and return the message body."""
+    params = urlencode(
+        {
+            "app_id": MUSIXMATCH_APP_ID,
+            "usertoken": token,
+            "q_track": title,
+            "q_artist": artist,
+        },
+        quote_via=quote,
+    )
+
+    url = f"{MUSIXMATCH_BASE}/macro.subtitles.get?{params}"
+    req = Request(url, headers={"User-Agent": USER_AGENT, "Cookie": f"x-mxm-token-guid={token}"})
+    try:
+        with urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8")
+    except Exception as exc:
+        raise ApiError(f"Network error: {exc}") from exc
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ApiError(f"Invalid JSON response: {exc}") from exc
+    time.sleep(REQUEST_DELAY_SEC)
+
+    msg = data.get("message", data)
+    header = msg.get("header", {})
+    status = header.get("status_code", 0)
+    hint = header.get("hint", "")
+
+    if status == 401 and hint == "renew":
+        raise TokenError("Musixmatch token rate limited.")
+    if status == 401 and hint == "captcha":
+        raise TokenError(
+            "Musixmatch captcha triggered.\n"
+            f"Waiting {CAPTCHA_SLEEP_SECONDS} seconds, then regenerating token and retrying..."
+        )
+    if status != 200:
+        raise ApiError(f"Request failed with status {status}. Hint: {hint}")
+
+    return msg.get("body", {})
+
+
+def _extract_track_info(body: dict) -> Optional[dict]:
+    track = body.get("macro_calls", {}).get("matcher.track.get", {}).get("message", {})
+    if track.get("header", {}).get("status_code") != 200:
+        return None
+
+    return track.get("body", {}).get("track")
+
+
+def _extract_subtitles(body: dict) -> Optional[Lyrics]:
+    sub_list = (
+        body.get("macro_calls", {})
+        .get("track.subtitles.get", {})
+        .get("message", {})
+        .get("body", {})
+        .get("subtitle_list", [])
+    )
+
+    if not sub_list:
+        return None
+
+    entry = sub_list[0].get("subtitle", {})
+    lyrics = entry.get("subtitle_body", "")
+    return Lyrics(text=lyrics, is_synced=True, lang_code=entry.get("subtitle_language")) if lyrics else None
+
+
+def _extract_plain_lyrics(body: dict) -> Optional[Lyrics]:
+    lyrics_data = (
+        body.get("macro_calls", {})
+        .get("track.lyrics.get", {})
+        .get("message", {})
+        .get("body", {})
+        .get("lyrics", {})
+    )
+
+    if not isinstance(lyrics_data, dict):
+        return None
+
+    text = lyrics_data.get("lyrics_body", "")
+    return Lyrics(text=text, lang_code=lyrics_data.get("lyrics_language")) if text else None
+
+
+def download_lyrics(title: str, artist: str, token: str) -> Lyrics:
+    """Download lyrics for a given title/artist."""
+    body = _macro_subtitles(title, artist, token)
+
+    track = _extract_track_info(body)
+    if track is None:
+        raise MusixmatchError("Track not found")
+    if track.get("instrumental"):
+        raise MusixmatchError("Instrumental track")
+
+    if track.get("has_subtitles"):
+        lyrics = _extract_subtitles(body)
+        if lyrics:
+            return lyrics
+
+    if track.get("has_lyrics"):
+        lyrics = _extract_plain_lyrics(body)
+        if lyrics:
+            return lyrics
+
+    raise MusixmatchError("No lyrics found")
+
+
+def _has_existing_lrc(mp3_path: Path) -> bool:
+    if tuple(mp3_path.parent.glob(f"{mp3_path.stem}*.lrc")):
+        return True
+
+    if not shutil.which("lrc_tools"):
+        return False
+
+    try:
+        result = subprocess.run(
+            ["lrc_tools", "inspect", mp3_path],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        output = (result.stdout or result.stderr or "").strip()
+        has_synced_lyrics = bool(output and "SYLT" in output)
+        return has_synced_lyrics
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def process_single_file(
+    mp3_path: Path, directory: Path, index: int, total: int, token_mgr: TokenManager, args
+) -> None:
+    print(f"[{index}/{total}] {mp3_path.relative_to(directory)}")
+
+    if not args.force and _has_existing_lrc(mp3_path):
+        print("  LRC file exists or Lyrics already embedded")
+        return
+
+    meta = resolve_metadata(mp3_path)
+    if meta is None:
+        print(f"  SKIP: Could not determine title/artist from metadata or filename")
+        return
+
+    print(f"  Title:  {meta.title}")
+    print(f"  Artist: {meta.artist}")
+    if meta.album:
+        print(f"  Album:  {meta.album}")
+
+    token_mgr.maybe_rotate(args.rotate_every)
+
+    try:
+        lyrics = download_lyrics(meta.title, meta.artist, token_mgr.token)
+    except TokenError as exc:
+        print(f"  {exc}")
+        try:
+            lyrics = token_mgr.retry_with_fresh_token(download_lyrics, title=meta.title, artist=meta.artist)
+        except MusixmatchError as retry_exc:
+            print(f"  FAIL: {retry_exc}\n")
+            return
+    except MusixmatchError as exc:
+        print(f"  FAIL: {exc}\n")
+        return
+
+    if not lyrics.clean_text:
+        print(f"  No lyrics found\n")
+        return
+
+    if args.synced_only and lyrics.is_plain:
+        print(f"  SKIP: Only plain (unsynced) lyrics available, skipping per --synced-only\n")
+        return
+
+    lrc_path = lyrics.write_file(mp3_path)
+    label = "SYNCED LRC" if lyrics.is_synced else "PLAIN LRC"
+    lang = f" ({lyrics.lang_code})" if lyrics.lang_code else ""
+    print(f"  {label}{lang} downloaded: {lrc_path.name}\n")
+    token_mgr.count_request()
+
+
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=dedent("""
+            Download LRC lyrics for MP3 files from Musixmatch.
+
+            Dependencies:
+              - ffmpeg: used to read MP3 metadata
+              - lrc_tools (optional): to check if the MP3 has embedded synced lyrics and skip download
+            """),
+    )
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="Directory containing MP3 files (default: current directory)",
+    )
+    parser.add_argument(
+        "--force", "-f", action="store_true", help="Re-download even if an LRC file already exists"
+    )
+    parser.add_argument(
+        "--rotate-every",
+        "-r",
+        type=int,
+        default=TOKEN_ROTATE_EVERY,
+        metavar="N",
+        help="Rotate token after N downloads to avoid rate limiting "
+        f"(default: {TOKEN_ROTATE_EVERY}, 0 = disable)",
+    )
+    parser.add_argument(
+        "--synced-only",
+        "-s",
+        action="store_true",
+        help="Download only synced (timestamped) LRC files",
+    )
+    parser.add_argument("--no-recursive", action="store_true", help="Do not search subdirectories")
+    return parser.parse_args(argv)
+
+
+def main() -> None:
+    if not shutil.which("ffprobe"):
+        print("Error: ffmpeg is not installed.", file=sys.stderr)
+        sys.exit(1)
+
+    args = parse_args()
+    folder = Path(args.directory)
+
+    if not folder.is_dir():
+        print(f"Error: '{args.directory}' is not a valid directory", file=sys.stderr)
+        sys.exit(1)
+
+    mp3_files = sorted(folder.glob("*.mp3") if args.no_recursive else folder.rglob("*.mp3"))
+    print(f"Scanning for MP3 files in: {folder}")
+
+    if not mp3_files:
+        print("No MP3 files found.")
+        return
+
+    print(f"Found {len(mp3_files)} MP3 file(s)\n")
+
+    token_mgr = TokenManager()
+    token_mgr.acquire_initial()
+
+    for ind, path in enumerate(mp3_files, start=1):
+        process_single_file(path, folder, ind, len(mp3_files), token_mgr, args)
+
+
+if __name__ == "__main__":
+    main()
