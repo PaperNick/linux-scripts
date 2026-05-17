@@ -193,25 +193,26 @@ def _macro_subtitles(title: str, artist: str, token: str) -> dict:
     if status != 200:
         raise ApiError(f"Request failed with status {status}. Hint: {hint}")
 
-    return msg.get("body", {})
+    body = msg.get("body", {})
+    if not isinstance(body, dict):
+        raise ApiError(f"Unexpected API response type: {type(body).__name__}")
+    return body
 
 
 def _extract_track_info(body: dict) -> Optional[dict]:
-    track = body.get("macro_calls", {}).get("matcher.track.get", {}).get("message", {})
-    if track.get("header", {}).get("status_code") != 200:
+    msg = body.get("macro_calls", {}).get("matcher.track.get", {}).get("message", {})
+    if not isinstance(msg, dict):
+        return None
+    if msg.get("header", {}).get("status_code") != 200:
         return None
 
-    return track.get("body", {}).get("track")
+    track = msg.get("body", {}).get("track")
+    return track if isinstance(track, dict) else None
 
 
 def _extract_subtitles(body: dict) -> Optional[Lyrics]:
-    sub_list = (
-        body.get("macro_calls", {})
-        .get("track.subtitles.get", {})
-        .get("message", {})
-        .get("body", {})
-        .get("subtitle_list", [])
-    )
+    sub_body = body.get("macro_calls", {}).get("track.subtitles.get", {}).get("message", {}).get("body", {})
+    sub_list = sub_body if isinstance(sub_body, list) else []
 
     if not sub_list:
         return None
