@@ -8,7 +8,7 @@ if [ ! -d "$folder_to_encrypt" ]; then
   exit 1
 fi
 
-if [ "$(find "$folder_to_encrypt" -type d -empty)" != "" ]; then
+if [ "$(find "$folder_to_encrypt" -type f -print -quit)" = "" ]; then
   echo 'The specified folder is empty. Aborting.'
   exit 1
 fi
