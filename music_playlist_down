@@ -150,7 +150,7 @@ function sanitize_filename() {
   filename="${filename//>/＞}"
   filename="${filename//</＜}"
   filename="${filename//\"/＂}"
-  filename="${filename//\'/＇}"
+  filename="${filename//\'/’}"
   filename="${filename//\\/＼}"
   filename="${filename//\$/＄}"
   filename="${filename//!/！}"
