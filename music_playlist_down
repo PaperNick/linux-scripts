@@ -92,6 +92,7 @@ eval set -- "$PARAMS"
 SONG_FORMAT=${SONG_FORMAT:-mp3}
 START_EXECUTION_STEP="${START_EXECUTION_STEP:-1}"
 YOUTUBE_IDS_FILE="Album.txt"
+YOUTUBE_IDS_META_FILE="AlbumTitles.txt"
 YT_DLP_FORMAT="bestaudio"
 
 PLAYLIST_URL="$(echo "$1" | sed 's|https://music|https://www|g')"
@@ -182,10 +183,11 @@ function step_2() {
     exit 1
   fi
 
+  local jq_track_name='[(.artist // .creator // .uploader // ""), " - ", .title] | add'
   if [ "$SONG_FORMAT" = "webm" ]; then
-    yt-dlp -f "$YT_DLP_FORMAT" -o "%(id)s.%(ext)s" -a "$YOUTUBE_IDS_FILE"
+    yt-dlp -f "$YT_DLP_FORMAT" -o "%(id)s.%(ext)s" -a "$YOUTUBE_IDS_FILE" --print-json | jq --unbuffered -r "$jq_track_name" | tee "$YOUTUBE_IDS_META_FILE"
   else
-    yt-dlp -f "$YT_DLP_FORMAT" -o "%(id)s.%(ext)s" -t "$SONG_FORMAT" -a "$YOUTUBE_IDS_FILE"
+    yt-dlp -f "$YT_DLP_FORMAT" -o "%(id)s.%(ext)s" -t "$SONG_FORMAT" -a "$YOUTUBE_IDS_FILE" --print-json | jq --unbuffered -r "$jq_track_name" | tee "$YOUTUBE_IDS_META_FILE"
   fi
 
   if [ "$?" != "0" ]; then
@@ -196,18 +198,22 @@ function step_2() {
 
 function step_3() {
   echo "Step 3: Downloading playlist titles..."
-  TITLES=$(yt-dlp "$PLAYLIST_URL" --flat-playlist --dump-single-json | jq -r '.entries[] | [.channel, " - ", .title] | add')
 
-  if [ "$?" != "0" ]; then
-    echo "Error: Failed to download playlist titles."
-    exit 1
+  if [ ! -f "$YOUTUBE_IDS_META_FILE" ]; then
+    echo "Metadata file '$YOUTUBE_IDS_META_FILE' missing, downloading track titles..."
+    yt-dlp "$PLAYLIST_URL" --print "%(artist|creator|uploader)s - %(title)s" | tee "$YOUTUBE_IDS_META_FILE"
+
+    if [ "$?" != "0" ]; then
+      echo "Error: Failed to download playlist titles."
+      exit 1
+    fi
   fi
 
   echo "Sanitizing playlist titles..."
   SANITIZED_TITLES=()
   while IFS= read -r title; do
     SANITIZED_TITLES+=("$(sanitize_filename "$title")")
-  done <<< "$TITLES"
+  done <<< "$(cat "$YOUTUBE_IDS_META_FILE")"
 
   echo "Renaming files..."
   local ind=0
