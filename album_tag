@@ -1,0 +1,140 @@
+#!/usr/bin/env python
+
+import argparse
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from textwrap import dedent
+
+
+SPECIAL_CHARS_TABLE = str.maketrans(
+    {
+        "⧸": "/",
+        "＊": "*",
+        "？": "?",
+        "＆": "&",
+        "：": ":",
+        "；": ";",
+        "｜": "|",
+        "＞": ">",
+        "＜": "<",
+        "＂": '"',
+        "＼": "\\",
+        "＄": "$",
+        "！": "!",
+        "＃": "#",
+    }
+)
+
+
+def replace_special_chars(text: str) -> str:
+    return text.translate(SPECIAL_CHARS_TABLE)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=dedent(
+            """
+            Update the metadata of all MP3 files in the selected directory.
+
+            The track title, artist name and track number are derived from the file name.
+            The script will prompt for Album name, Year and Genre.
+
+            Note: The script matches only MP3 files with a track number prefix (e.g. "01. Artist - Title.mp3").
+            """
+        )
+    )
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="Directory containing MP3 files (default: current directory)",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    DIR = Path(args.directory)
+
+    if shutil.which("ffmpeg") is None:
+        print("Error: ffmpeg not found. Please install ffmpeg and ensure it's in your PATH.")
+        sys.exit(1)
+
+    album = replace_special_chars(input("Album name: ").strip())
+    date = input("Album year: ").strip()
+    genre = input("Genre: ").strip()
+
+    pattern = re.compile(r"^(\d+)\.\s*(.+?)\s*-\s*(.+)\.mp3$")
+    cover_suffix = re.compile(r"\s*\(cover\)\s*$", re.IGNORECASE)
+
+    print("\n--- Files to be processed ---")
+    files_display = []
+    files = sorted(DIR.glob("*.mp3"))
+
+    if not files:
+        print("No .mp3 files found.")
+        sys.exit(1)
+
+    for filepath in files:
+        filename = filepath.name
+        match = pattern.match(filename)
+        if not match:
+            print(f"SKIP (no match): {filename}")
+            continue
+
+        track_str, artist, title = match.groups()
+        title = cover_suffix.sub("", title)
+
+        title = replace_special_chars(title)
+        artist = replace_special_chars(artist)
+
+        track = str(int(track_str))
+        print(f"{filepath}")
+        print(f"  Title={title}; Artist={artist}; Track={track}; Album={album}; Date={date}; Genre={genre}")
+        print()
+        files_display.append((filepath, title, artist, track))
+
+    if not files_display:
+        print("No matching files to tag.")
+        sys.exit(0)
+
+    confirm = input("Proceed with tagging? (y/N): ").strip().lower()
+    if confirm != "y":
+        print("Aborted.")
+        sys.exit(0)
+
+    for mp3_file, title, artist, track in files_display:
+        tmp_name = f".tmp_{mp3_file.name}"
+        tmp = mp3_file.with_name(tmp_name)
+
+        cmd = [
+            "ffmpeg",
+            "-i", str(mp3_file),
+            "-c", "copy",
+            "-map_metadata", "-1",
+            "-metadata", f"title={title}",
+            "-metadata", f"artist={artist}",
+            "-metadata", f"album={album}",
+            "-metadata", f"date={date}",
+            "-metadata", f"genre={genre}",
+            "-metadata", f"track={track}",
+            "-id3v2_version", "3",
+            "-y",
+            str(tmp),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"FAIL: {mp3_file.name}")
+            print(result.stderr[-2000:])
+            sys.exit(1)
+
+        tmp.rename(mp3_file)
+        print(f"OK: {mp3_file.name}")
+
+
+if __name__ == "__main__":
+    main()
