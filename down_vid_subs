@@ -27,6 +27,7 @@ Positional arguments:
 Optional arguments:
   -l, --list-subs: Show the available subtitles for <video_url> and exit.
   -s, --subs-only: Download only the subtitles of <video_url>.
+  -a, --auto-subs: Download automatically generated subtitles of <video_url>.
   -h, --help: Show the help text.
 
 Example Usage:
@@ -46,6 +47,10 @@ while [ $# -gt 0 ]; do
       ;;
     -s|--subs-only)
       DOWNLOAD_SUBS_ONLY="1"
+      shift 1
+      ;;
+    -a|--auto-subs)
+      DOWNLOAD_AUTO_SUBS="1"
       shift 1
       ;;
     -h|--help)
@@ -115,7 +120,22 @@ function main() {
       ch) sub_lang="zh" ;;
     esac
 
-    yt-dlp --write-sub --sub-lang "$sub_lang" --convert-subs srt --skip-download -o "%(ext)s" "$YOUTUBE_LINK"
+
+    SUBS_COMMAND=(
+      yt-dlp
+      --write-sub
+      --sub-lang "$sub_lang"
+      --convert-subs srt
+      --skip-download
+      -o "%(ext)s"
+      "$YOUTUBE_LINK"
+    )
+
+    if [ "$DOWNLOAD_AUTO_SUBS" = "1" ]; then
+      SUBS_COMMAND+=("--write-auto-sub")
+    fi
+
+    "${SUBS_COMMAND[@]}"
   done
 }
 
